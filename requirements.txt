@@ -1,0 +1,43 @@
+# ── Agent SDKs ─────────────────────────────────────────────────────────────────
+anthropic>=0.49.0
+openai>=1.68.0
+google-genai>=1.55.0
+python-dotenv>=1.0.0
+
+# ── File extraction — corpus ingestion ─────────────────────────────────────────
+python-docx>=1.1.2
+openpyxl>=3.1.5
+python-pptx>=1.0.2
+PyMuPDF>=1.24.0
+pdfminer.six>=20221105
+
+# ── GDrive corpus file resolution ──────────────────────────────────────────────
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+google-auth-oauthlib>=1.1.0
+
+# ── MCP servers (corpus + results) ─────────────────────────────────────────────
+starlette>=0.41.0
+uvicorn>=0.32.0
+sse-starlette>=2.1.0
+
+# ── Data processing (Gemini file output execution environment) ─────────────────
+# Gemini DRA generates Python code that imports these libraries when producing
+# xlsx / docx / pptx output files. All must be present in the conda env or
+# the local subprocess execution step will fail with ModuleNotFoundError.
+pandas>=2.2.0
+numpy>=1.26.0
+scipy>=1.13.0
+matplotlib>=3.9.0
+
+# ── Optimisation (Gemini file output execution environment) ────────────────────
+# Gemini DRA occasionally generates LP optimisation code using pulp,
+# and regression code using scikit-learn.
+pulp>=2.8.0
+scikit-learn>=1.5.0
+
+# ── Optional: improved PDF extraction for corpus_tools ─────────────────────────
+pdfplumber>=0.11.0
+
+# ── Optional: Excel Binary Workbook support (.xlsb corpus files) ───────────────
+pyxlsb>=1.0.10

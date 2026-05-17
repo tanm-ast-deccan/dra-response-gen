@@ -1,0 +1,32 @@
+12:33:28 [dra.csv_loader] INFO: Loaded 47 valid rows from ./input/prompt_data.csv
+12:33:28 [dra.csv_loader] INFO: Limited to 1 rows before resolution
+12:33:28 [dra.csv_loader] INFO: File resolver staging: ./output/eval_files
+12:33:28 [dra.file_resolver] INFO: Authenticated via service account: ./gcp_key.json
+12:33:28 [googleapiclient.discovery_cache] INFO: file_cache is only supported with oauth2client<4.0.0
+12:34:36 [dra.file_resolver] ERROR: Failed to resolve GDrive ref https://drive.google.com/drive/folders/1cUzRM_eTvEIySqOlQ0CIpZDAOSh04MXF: The read operation timed out
+12:34:36 [dra.file_resolver] INFO: Resolved 1 references → 0 local files
+12:34:36 [dra.csv_loader] INFO: [anagha_patne_57e965] Resolved 0 files from GDrive
+12:34:36 [dra.csv_loader] INFO: Created 1 packages (0 with resolved files)
+12:34:36 [dra.results_store] INFO: Loaded index: 25 results
+12:34:36 [dra.csv_loader] INFO: ━━━ Dispatching 1/1: anagha_patne_57e965 [FSP, IAT-3] by Anagha Patne ━━━
+12:34:36 [dra.dispatcher] INFO: Dispatching anagha_patne_57e965 to 4 agents (Pass@1, dry_run=False)
+12:34:36 [dra.dispatcher] WARNING: [anagha_patne_57e965] File not found: https://drive.google.com/drive/folders/1cUzRM_eTvEIySqOlQ0CIpZDAOSh04MXF
+12:34:36 [dra.dispatcher] INFO: [anagha_patne_57e965] Starting openai/pass1
+12:34:36 [dra.dispatcher] INFO: [anagha_patne_57e965] Starting gemini/pass1
+12:34:36 [dra.dispatcher] INFO: [anagha_patne_57e965] Starting perplexity/pass1
+/home/deccan/DRA/adapters/gemini_adapter.py:185: UserWarning: Interactions usage is experimental and may change in future versions.
+  self._client.interactions.create,
+12:39:38 [openai._base_client] INFO: Retrying request to /chat/completions in 0.451433 seconds
+12:41:54 [openai._base_client] INFO: Retrying request to /chat/completions in 0.766349 seconds
+12:42:24 [httpx] INFO: HTTP Request: POST https://api.perplexity.ai/chat/completions "HTTP/1.1 200 OK"
+12:42:24 [dra.dispatcher] INFO: [anagha_patne_57e965] perplexity/pass1 complete: OK, cost=$0.0374, 3648 chars
+12:43:54 [httpx] INFO: HTTP Request: POST https://api.openai.com/v1/responses "HTTP/1.1 200 OK"
+12:43:54 [dra.dispatcher] INFO: [anagha_patne_57e965] openai/pass1 complete: OK, cost=$2.1888, 592 chars
+12:50:36 [dra.dispatcher] ERROR: [anagha_patne_57e965] gemini/pass1 timed out (dispatcher-level)
+12:50:36 [dra.dispatcher] ERROR: [anagha_patne_57e965/claude] Agent failed: pip install anthropic  (required for Claude adapter)
+12:50:36 [dra.dispatcher] INFO: [anagha_patne_57e965] Dispatch complete: 2/4 agents succeeded, cost=$2.23, duration=960.5s
+12:50:36 [dra.results_store] INFO: Stored result: anagha_patne_57e965
+12:50:36 [dra.dispatcher] INFO: Saved dispatch result to ./output/results/json/anagha_patne_57e965.json
+12:50:36 [dra.csv_loader] INFO:   → 2/4 agents succeeded, $2.2263, 960.5s
+12:50:36 [dra.csv_loader] INFO: ━━━ Batch complete: 1/1 dispatched ━━━
+12:50:36 [dra.csv_loader] INFO:   Results store: 26 total, 0 scored, $4.11 total cost
