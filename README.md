@@ -262,12 +262,6 @@ The staging script is preserved on failure for manual debugging.
 - Python 3.10+
 - conda environment (tested on `dra` env on Mac, `adobe` env on DGX Spark)
 
-### 1. Clone the repository
-
-```bash
-git clone git@github.com:tanm-ast-deccan/deep_research_agent.git
-cd deep_research_agent/deep_research_eval
-```
 
 ### 2. Create and activate conda environment
 
