@@ -273,26 +273,25 @@ class TaskDispatcher:
         if not config.enforce_iat:
             task.web_search_enabled = True
 
-        # Set output_files_dir when the prompt requires file output.
+        # Set output_files_dir for EVERY task (not just when detector fires).
+        # The model may generate deliverable files even when output_formats
+        # is empty — the regex detector is advisory, not authoritative.
         # Each task gets its own subdirectory so multi-agent results
-        # don't collide. Pass@K passes within the same task share the
-        # directory (individual files are differentiated by agent name
-        # and pass index inside the adapter).
-        # Skip directory creation on dry runs — no files will be produced.
-        if task.output_formats and not config.dry_run:
+        # don't collide. Skip directory creation on dry runs.
+        if not config.dry_run:
             if config.output_files_base_dir:
                 task.output_files_dir = os.path.join(
                     config.output_files_base_dir, package.task_id
                 )
             else:
-                # Deterministic temp path — avoids accumulating random mkdtemp dirs
                 task.output_files_dir = os.path.join(
                     tempfile.gettempdir(), "dra_output_files", package.task_id
                 )
             os.makedirs(task.output_files_dir, exist_ok=True)
             logger.info(
-                "[%s] Output files dir: %s (formats: %s)",
-                package.task_id, task.output_files_dir, task.output_formats,
+                "[%s] Output files dir: %s (detected formats: %s)",
+                package.task_id, task.output_files_dir,
+                task.output_formats or "(none — model decides)",
             )
 
         # ── Step 4: Fan out to agents ──────────────────────────
@@ -392,6 +391,7 @@ class TaskDispatcher:
         "gemini":     3600,   # 60 min — Interactions API is slow
         "openai":     3600,   # 60 min — o3-deep-research can run long
         "claude":      900,   # 15 min — agentic loop, usually faster
+        "qwen":       3600,   # 30 min — local tools + self-verification
         "perplexity":  300,   #  5 min — synchronous, fast
     }
 
@@ -574,6 +574,10 @@ class TaskDispatcher:
             kwargs["use_context_cache"] = overrides.get(
                 "use_context_cache", False
             )
+
+        # Qwen agent configuration
+        if agent_name == "qwen":
+            kwargs["max_tool_rounds"] = overrides.get("max_tool_rounds", 100)
 
         adapter = AdapterClass(**kwargs)
         self._adapter_cache[cache_key] = adapter

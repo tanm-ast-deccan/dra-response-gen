@@ -391,12 +391,14 @@ async def dispatch_packages(
     config: DispatchConfig,
     results_dir: Optional[str] = None,
     output_dir: Optional[str] = None,
+    max_parallel: int = 1,
 ) -> list[DispatchResult]:
     """
     Dispatch all packages through the evaluation pipeline.
 
-    Runs packages sequentially (one at a time) to manage API costs
-    and rate limits. Each package fans out to all agents concurrently.
+    When max_parallel=1 (default): sequential, same as before.
+    When max_parallel>1: bounded concurrency via semaphore.
+    Each package still fans out to all agents concurrently within itself.
     """
     dispatcher = TaskDispatcher()
     store = None
@@ -412,56 +414,84 @@ async def dispatch_packages(
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
-    results = []
     total = len(packages)
+    results = []
+    sem = asyncio.Semaphore(max_parallel)
+    results_lock = asyncio.Lock()
 
-    for i, (row, package) in enumerate(packages, 1):
-        logger.info(
-            "━━━ Dispatching %d/%d: %s [%s, %s] by %s ━━━",
-            i, total,
-            package.task_id,
-            package.research_type or "?",
-            package.iat_type or "?",
-            row.get("sme_name", "?"),
-        )
+    if max_parallel > 1:
+        logger.info("Parallel dispatch: max %d tasks concurrently", max_parallel)
 
-        if row.get("drive_url") and not package.file_paths:
-            logger.warning(
-                "[%s] Skipping: GDrive ref resolved to 0 files: %s",
-                package.task_id, row["drive_url"][:80],
-            )
-            continue
-
-        try:
-            result = await dispatcher.dispatch(package, config)
-            results.append(result)
-
-            if store:
-                result_dict = dispatch_result_to_dict(result)
-                result_dict["sme_metadata"] = {
-                    "sme_name":       row.get("sme_name", ""),
-                    "email":          row.get("email", ""),
-                    "submitted_at":   row.get("submitted_at", ""),
-                    "domain_detail":  row.get("domain_detail", ""),
-                    "drive_url":      row.get("drive_url", ""),
-                    "prompt_id":      row.get("prompt_id", ""),
-                    "allocation_id":  row.get("allocation_id", ""),
-                    "estimated_time": row.get("estimated_time", ""),
-                }
-                await store.store_result(result_dict)
-
-            if output_dir:
-                out_path = os.path.join(output_dir, f"{package.task_id}.json")
-                save_dispatch_result(result, out_path)
-
+    async def _run_one(i: int, row: dict, package: PromptPackage):
+        """Run a single task, bounded by semaphore."""
+        async with sem:
             logger.info(
-                "  → %d/%d agents succeeded, $%.4f, %.1fs",
-                len(result.agents_succeeded), len(result.agents_attempted),
-                result.total_cost_usd, result.total_duration_sec,
+                "━━━ Dispatching %d/%d: %s [%s, %s] by %s ━━━",
+                i, total,
+                package.task_id,
+                package.research_type or "?",
+                package.iat_type or "?",
+                row.get("sme_name", "?"),
             )
 
-        except Exception as e:
-            logger.error("  → FAILED: %s", e)
+            if row.get("drive_url") and not package.file_paths:
+                logger.warning(
+                    "[%s] Skipping: GDrive ref resolved to 0 files: %s",
+                    package.task_id, row["drive_url"][:80],
+                )
+                return None
+
+            try:
+                result = await dispatcher.dispatch(package, config)
+
+                if store:
+                    result_dict = dispatch_result_to_dict(result)
+                    result_dict["sme_metadata"] = {
+                        "sme_name":       row.get("sme_name", ""),
+                        "email":          row.get("email", ""),
+                        "submitted_at":   row.get("submitted_at", ""),
+                        "domain_detail":  row.get("domain_detail", ""),
+                        "drive_url":      row.get("drive_url", ""),
+                        "prompt_id":      row.get("prompt_id", ""),
+                        "allocation_id":  row.get("allocation_id", ""),
+                        "estimated_time": row.get("estimated_time", ""),
+                    }
+                    async with results_lock:
+                        await store.store_result(result_dict)
+
+                if output_dir:
+                    out_path = os.path.join(output_dir, f"{package.task_id}.json")
+                    save_dispatch_result(result, out_path)
+
+                logger.info(
+                    "  → %d/%d agents succeeded, $%.4f, %.1fs",
+                    len(result.agents_succeeded), len(result.agents_attempted),
+                    result.total_cost_usd, result.total_duration_sec,
+                )
+                return result
+
+            except Exception as e:
+                logger.error("  → FAILED: %s", e)
+                return None
+
+    if max_parallel <= 1:
+        # Sequential (original behavior)
+        for i, (row, package) in enumerate(packages, 1):
+            result = await _run_one(i, row, package)
+            if result:
+                results.append(result)
+    else:
+        # Parallel with bounded concurrency
+        tasks = [
+            _run_one(i, row, package)
+            for i, (row, package) in enumerate(packages, 1)
+        ]
+        raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+        for r in raw_results:
+            if isinstance(r, Exception):
+                logger.error("Task exception: %s", r)
+            elif r is not None:
+                results.append(r)
 
     logger.info("━━━ Batch complete: %d/%d dispatched ━━━", len(results), total)
     if store:
@@ -585,6 +615,10 @@ Examples:
     parser.add_argument("--agents", nargs="*",
                         default=["claude", "openai", "gemini", "perplexity"])
     parser.add_argument("--passes", type=int, default=1)
+    parser.add_argument("--max-parallel-tasks", type=int, default=1,
+                        help="Max tasks to run concurrently (default: 1 = sequential). "
+                             "Set to 3-5 for faster batch runs. OpenRouter handles 5+ "
+                             "concurrent requests comfortably.")
     parser.add_argument("--dry-run", action="store_true", default=True)
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--results-dir", default=None)
@@ -654,6 +688,7 @@ Examples:
             config,
             results_dir=args.results_dir,
             output_dir=args.output,
+            max_parallel=args.max_parallel_tasks,
         )
 
         total_cost = sum(r.total_cost_usd for r in results)

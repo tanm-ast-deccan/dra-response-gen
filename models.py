@@ -28,7 +28,7 @@ class ResearchTask:
     web_search_enabled: bool = True
     max_iterations: int = 25
     max_cost_usd: float = 15.0
-    timeout_seconds: int = 900  # 15 minutes
+    timeout_seconds: int = 1800  # 15 minutes
 
     # ── Evaluation metadata ─────────────────────────────────────────
     research_type: Optional[str] = None    # CRP | RCP | SCP | LDP | FSP or full forms
@@ -160,7 +160,7 @@ class PromptPackage:
 
     # ── Budget overrides ──────────────────────────────────────────────
     max_cost_usd: float = 15.0
-    timeout_seconds: int = 900
+    timeout_seconds: int = 1800
     max_iterations: int = 25
 
     @property
