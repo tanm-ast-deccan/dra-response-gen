@@ -111,6 +111,7 @@ output/
 input/
 
 # ─── Misc ─────────────────────────────────────────────────
+scratch.py
 *.bak
 *.tmp
 *.temp
@@ -123,3 +124,4 @@ results*/
 reports*/
 recovered_files/
 dispatch*/
+stging/

@@ -58,7 +58,8 @@ import logging
 import argparse
 from typing import Optional
 
-from env_loader import load_env
+# from env_loader import load_env
+from dra_harness.config import load_env
 load_env()
 
 logger = logging.getLogger("dra.mcp.results")

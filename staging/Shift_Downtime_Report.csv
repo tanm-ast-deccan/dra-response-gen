@@ -1,0 +1,22 @@
+Date,Line_ID,Downtime_Category,Downtime_Minutes,Technician_ID,Spare_Part_Code,Audit_Flag
+2025-01-01,Line_1,Changeover,50,T01,SPX1,N
+2025-01-01,Line_2,Changeover,100,T01,SPX1,N
+2025-01-01,Line_3,Changeover,50,T01,SPX1,N
+2025-01-02,Line_1,Sensor Fault,60,T02,SPX2,Y
+2025-01-02,Line_2,Sensor Fault,120,T02,SPX2,Y
+2025-01-02,Line_3,Sensor Fault,60,T02,SPX2,Y
+2025-01-03,Line_1,Calibration,70,T03,SPX3,N
+2025-01-03,Line_2,Calibration,140,T03,SPX3,N
+2025-01-03,Line_3,Calibration,70,T03,SPX3,N
+2025-01-04,Line_1,Mechanical Failure,80,T04,SPX4,Y
+2025-01-04,Line_2,Mechanical Failure,160,T04,SPX4,Y
+2025-01-04,Line_3,Mechanical Failure,80,T04,SPX4,Y
+2025-01-05,Line_1,Changeover,40,T00,SPX5,N
+2025-01-05,Line_2,Changeover,80,T00,SPX5,N
+2025-01-05,Line_3,Changeover,40,T00,SPX5,N
+2025-01-06,Line_1,Sensor Fault,50,T01,SPX6,Y
+2025-01-06,Line_2,Sensor Fault,100,T01,SPX6,Y
+2025-01-06,Line_3,Sensor Fault,50,T01,SPX6,Y
+2025-01-07,Line_1,Calibration,60,T02,SPX7,N
+2025-01-07,Line_2,Calibration,120,T02,SPX7,N
+2025-01-07,Line_3,Calibration,60,T02,SPX7,N

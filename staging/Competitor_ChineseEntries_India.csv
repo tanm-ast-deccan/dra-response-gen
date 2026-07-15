@@ -1,0 +1,20 @@
+Entrant_Code,Entry_Year,Exit_Year,Years_in_Market,Approach,Sub_Brand_Used,Local_RnD,Make_in_India,Peak_Share_Pct,Yr5_Share_Pct,Status,Capex_Reported_USDm,Notes
+Entrant A,2015,2017,2,Single brand premium-skew + content bundling,No,No,No,1.4,N/A_exited,Exited,~120,"Aggressive launch; collapsed when parent group hit liquidity crisis"
+Entrant B,2015,2018,3,Single brand mass-market online-only,No,No,Yes (assembly only),1.1,0.4,Wound down,~45,"No sub-brand differentiation; squeezed by mid-tier incumbents"
+Entrant C,2017,2018,1,Premium-only single brand,No,No,No,0.1,N/A_exited,Exited,~25,"Failed to build channel; minimal marketing"
+Entrant D,2015,2017,2,Online-exclusive single brand,No,No,Used parent group plant,0.8,N/A_absorbed,Absorbed into parent group,~35,"Folded into parent's existing India operation"
+Entrant E,2014,2018,4,Single brand mid-tier offline,No,No,Yes,4.7,1.2,Wound down,~180,"Strong offline distribution but single-brand premium drift killed ASP discipline"
+Entrant F,2015,2018,3,Single brand mid-premium online,No,No,No,0.6,0.2,Exited,~30,"Minor presence; never broke 1% share"
+Entrant G,2014,2022,8,Sub-brand online + offline expansion,Yes,Yes,Yes,5.3,4.2,Exited (parent regulatory action),~250,"REFERENCE CASE: sub-brand architecture sustained >5% share peak"
+Entrant H,2014,Ongoing,12+,Sub-brand online + offline expansion,Yes (two sub-brands),Yes,Yes,29.2,N/A_ongoing,Active leader,~600,"Market leader through 2021; uses sub-brand for sub-Rs 12K, performance-tier sub-brand for gaming"
+Entrant I,2018,2021,3,Hybrid (main brand + late sub-brand),Late (Yr3),Limited,Yes,2.8,1.4,Wound down,~95,"Sub-brand introduced too late to gain traction"
+,,,,,,,,,,,,,
+SUMMARY,,,,,,,,,,,,,
+Total prior Chinese OEM entries documented,9,,,,,,,,,,,,
+Entries using sub-brand architecture from launch,2,,,(Entrants G and H only),,,,,,,,,
+Entries that sustained >4% share at Yr5,2,,,(Entrants G and H - same set as sub-brand users),,,,,,,,,
+Entries that failed to clear 2% share at Yr5,7,,,(All single-brand entries),,,,,,,,,
+,,,,,,,,,,,,,
+KEY_INSIGHT,"Of nine documented Chinese OEM India entries, only the two that used a separate sub-brand from launch (Entrants G and H) sustained >4% share at Year 5. All seven single-brand entries failed to clear 2% share at Year 5 and exited within 3-4 years. Entrant I confirms the timing point: introducing a sub-brand in Year 3 did not recover the share trajectory.",,,,,,,,,,,,
+,,,,,,,,,,,,,
+SOURCE,"Compiled from Counterpoint India Smartphone Tracker historical issues 2014-2024; Tianlong Strategy Office competitive intelligence file; trade press coverage; BIS public registration database. Brand identities anonymized for internal review.",,,,,,,,,,,,

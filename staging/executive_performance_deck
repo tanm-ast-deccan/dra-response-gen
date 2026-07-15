@@ -1,0 +1,41 @@
+Slide_ID,Slide_Title,Section,Content_Summary,Relevance_Context
+1,Executive Summary,Overview,"Platform growth remains strong, while revenue expansion appears more moderate",Corporate
+2,Growth Overview,Traffic,Traffic increased across most merchant cohorts in recent periods,Growth
+3,Growth Overview,Acquisition,Merchant onboarding expanded across multiple segments,Growth
+4,Performance Snapshot,Revenue,Revenue growth not fully aligned with traffic expansion,Corporate
+5,Performance Snapshot,Scaling Merchants,A subset of merchants demonstrate consistent scaling patterns,Corporate
+6,Marketing Performance,CAC,Customer acquisition costs have shown an upward trend across channels,Marketing
+7,Marketing Performance,Efficiency,Marketing efficiency varies across merchants and categories,Marketing
+8,Marketing Performance,Spend Levels,Several merchants appear to be operating below higher spend cohorts,Marketing
+9,Marketing Performance,Attribution,Attribution gaps continue to affect visibility into channel performance,Marketing
+10,Marketing Insights,Top Cohorts,Higher spend cohorts tend to show stronger order trends,Marketing
+11,Marketing Insights,Variability,Returns on marketing investment remain uneven across segments,Marketing
+12,Creative Performance,Assets,Creative refresh cycles ongoing across the merchant base,Creative
+13,Creative Performance,Testing,Testing coverage expanded with mixed performance outcomes,Creative
+14,Funnel Performance,Conversion,Conversion rates remain broadly stable across categories,Funnel
+15,Funnel Performance,AOV,Average order values show limited variation across cohorts,Funnel
+16,Funnel Performance,Drop-offs,Some variability observed across funnel stages,Funnel
+17,Operational Signals,Delivery,Delivery timelines show variability across regions and partners,Service
+18,Scaling Analysis,Top Performers,Top merchants continue to scale under certain conditions,Growth
+19,Scaling Analysis,Long Tail,A large portion of merchants show limited scaling momentum,Growth
+20,Strategic View,Opportunity,Headroom exists in both merchant acquisition and performance improvement,Corporate
+21,Strategic View,Expansion Plan,Expansion of merchant base under consideration for upcoming cycle,Corporate
+22,Operational Overview,Service Ops,Service operations have scaled alongside merchant growth,Service
+23,Operational Overview,Capacity,Operational capacity expanded across fulfilment partners,Service
+24,Operational Overview,Stability,Operational performance appears broadly stable with some variability,Service
+25,Customer Experience,Observation,Customer experience outcomes vary across post-purchase journeys,Service
+26,Operational Signals,Returns,Return patterns fluctuate across categories and time periods,Service
+27,Technology Signals,Tracking,Order tracking consistency varies across systems and integrations,IT
+28,Financial Impact,Costs,Rising acquisition and fulfilment costs observed across cohorts,Finance
+29,Financial Impact,Unit Economics,Unit economics vary across merchant segments,Finance
+30,Process Signals,Execution,Execution variability observed across processes and teams,Service
+31,Risk Assessment,Scaling Risk,Scaling without improved efficiency may impact profitability over time,Corporate
+32,Recommendation Direction,Growth,Increased marketing investment is one of several potential levers,Corporate
+33,Recommendation Direction,Acquisition,Merchant acquisition expansion remains under evaluation,Corporate
+34,Additional Observation,Trend,Performance divergence observed between traffic and realised outcomes,Corporate
+35,Customer Layer,Retention,Repeat behaviour varies across cohorts and segments,Service
+36,Next Steps,Plan,Accelerate onboarding and strengthen merchant enablement,Corporate
+37,Next Steps,Execution,Continue improving execution across functions,Corporate
+38,Appendix,Notes,Data compiled from multiple performance and operational sources,Reference
+39,Appendix,Assumptions,Insights based on currently available data,Reference
+40,Appendix,Limitations,Observed trends subject to reporting variability,Reference

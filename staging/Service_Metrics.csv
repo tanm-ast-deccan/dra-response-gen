@@ -1,0 +1,35 @@
+Record_Type,Business_Unit,Plant,Role,Shift,Reported_Utilization,Adjusted_Utilization,TAT_Days,Activity_Type,Comments
+Summary,All,All,All,All,78,,75,Service,FY25 Q3 Consolidated Dashboard - Service Operations
+Detail,BU1,Plant_A,L1_Engineer,Day,82,64,72,Service,Includes training hours
+Detail,BU1,Plant_A,L2_Engineer,Night,76,62,78,Service,Seasonal spike in Q4
+Detail,BU1,Plant_A,Technician,Night,74,62,80,Service,Idle time during off-peak hours
+Detail,BU2,Plant_B,L1_Engineer,Day,80,65,74,Service,Recurring workload
+Detail,BU2,Plant_B,L2_Engineer,Night,75,63,77,Service,Shift inefficiency noted
+Detail,BU2,Plant_B,Technician,Night,73,62,79,Service,Excess staffing in role
+Detail,BU3,Plant_C,L1_Engineer,Day,79,64,73,Service,Excludes one-time training
+Detail,BU3,Plant_C,L2_Engineer,Night,77,63,76,Service,Role overlap identified
+Detail,BU3,Plant_C,Technician,Night,72,62,81,Service,Low night shift utilization
+Detail,BU4,Plant_D,L1_Engineer,Day,81,65,71,Service,Steady-state operations
+Detail,BU4,Plant_D,L2_Engineer,Night,74,63,78,Service,Idle capacity observed
+Detail,BU4,Plant_D,Technician,Night,73,62,80,Service,Shift imbalance
+Detail,BU5,Plant_E,L1_Engineer,Day,83,65,70,Service,Includes peak load period
+Detail,BU5,Plant_E,L2_Engineer,Night,76,,75,Service,Adjusted value not available
+Detail,BU5,Plant_E,Technician,Night,72,62,82,Service,Low utilization period
+Detail,BU6,Plant_F,L1_Engineer,Day,80,64,73,Service,Adjusted baseline
+Detail,BU6,Plant_F,L2_Engineer,Night,75,63,77,Service,Overlap inefficiency
+Detail,BU6,Plant_F,Technician,Night,71,62,83,Service,Idle hours recorded
+# Duplicate / variant rows (adds realism + RCP complexity),,,,,,,,,
+Detail,BU1,Plant_A,L1_Engineer,Day,83,64,73,Service,Duplicate record variation
+Detail,BU4,Plant_D,L2_Engineer,Night,75,63,79,Service,Repeated entry
+# Non-core / irrelevant noise,,,,,,,,,
+NonCore,BU1,Plant_A,All,All,90,,,Capability_Development,Training credit inflates utilization
+NonCore,BU2,Plant_B,All,All,88,,,Seasonal_Adjustment,Peak coverage
+NonCore,BU3,Plant_C,All,All,92,,,Operations_Linked,OEE metric
+NonCore,BU4,Plant_D,All,All,89,,,Operations_Linked,Yield performance
+NonCore,BU5,Plant_E,All,All,1500,,,Strategic_Initiatives,Capex planning
+NonCore,BU6,Plant_F,All,All,0,,,External_Engagement,CSR program
+# Additional light noise (improves RCP without bloating),,,,,,,,,
+NonCore,BU3,Plant_C,All,All,87,,,Audit,Internal audit support
+NonCore,BU2,Plant_B,All,All,91,,,Admin,Documentation backlog
+NonCore,BU5,Plant_E,All,All,84,,,IT,System downtime logging
+NonCore,BU6,Plant_F,All,All,89,,,Support,Cross-functional support

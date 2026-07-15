@@ -1,0 +1,56 @@
+Date,Dark_Store,SKU,Planned_Stock,Actual_Stock,Mismatch_Flag,Orders_Cancelled_Due_to_Stockout,City
+2026-01-12,DS-Mumbai-03,Amul Butter 500g,420,87,Yes,34,Mumbai
+2026-01-13,DS-Mumbai-03,Maggi 2-Min Noodles,680,112,Yes,47,Mumbai
+2026-01-14,DS-Delhi-07,Surf Excel 1kg,390,245,No,3,Delhi
+2026-01-15,DS-Bangalore-02,Parle-G 800g,520,98,Yes,41,Bangalore
+2026-01-16,DS-Hyderabad-05,Amul Cheese 200g,310,67,Yes,29,Hyderabad
+2026-01-17,DS-Pune-04,Maggi 2-Min Noodles,590,134,Yes,38,Pune
+2026-01-18,DS-Chennai-08,Surf Excel 1kg,470,189,No,4,Chennai
+2026-01-19,DS-Ahmedabad-06,Amul Butter 500g,380,72,Yes,33,Ahmedabad
+2026-01-20,DS-Kolkata-09,Parle-G 800g,450,89,Yes,36,Kolkata
+2026-01-21,DS-Jaipur-11,Maggi 2-Min Noodles,340,56,Yes,27,Jaipur
+2026-01-22,DS-Mumbai-03,Amul Cheese 200g,290,43,Yes,31,Mumbai
+2026-01-23,DS-Delhi-07,Surf Excel 1kg,410,201,No,2,Delhi
+2026-01-24,DS-Bangalore-02,Parle-G 800g,480,76,Yes,44,Bangalore
+2026-01-25,DS-Hyderabad-05,Amul Butter 500g,350,64,Yes,28,Hyderabad
+2026-01-26,DS-Pune-04,Maggi 2-Min Noodles,610,128,Yes,39,Pune
+2026-01-27,DS-Chennai-08,Surf Excel 1kg,430,167,No,5,Chennai
+2026-01-28,DS-Ahmedabad-06,Amul Cheese 200g,320,59,Yes,26,Ahmedabad
+2026-01-29,DS-Kolkata-09,Parle-G 800g,470,92,Yes,37,Kolkata
+2026-01-30,DS-Jaipur-11,Maggi 2-Min Noodles,360,61,Yes,25,Jaipur
+2026-01-31,DS-Mumbai-03,Amul Butter 500g,400,81,Yes,35,Mumbai
+2026-02-01,DS-Delhi-07,Surf Excel 1kg,380,178,No,3,Delhi
+2026-02-02,DS-Bangalore-02,Parle-G 800g,510,103,Yes,42,Bangalore
+2026-02-03,DS-Hyderabad-05,Amul Cheese 200g,340,71,Yes,30,Hyderabad
+2026-02-04,DS-Pune-04,Maggi 2-Min Noodles,570,119,Yes,37,Pune
+2026-02-05,DS-Chennai-08,Surf Excel 1kg,450,156,No,4,Chennai
+2026-02-06,DS-Ahmedabad-06,Amul Butter 500g,390,77,Yes,32,Ahmedabad
+2026-02-07,DS-Kolkata-09,Parle-G 800g,460,87,Yes,35,Kolkata
+2026-02-08,DS-Jaipur-11,Maggi 2-Min Noodles,330,54,Yes,24,Jaipur
+2026-02-09,DS-Mumbai-03,Amul Cheese 200g,280,39,Yes,29,Mumbai
+2026-02-10,DS-Delhi-07,Surf Excel 1kg,420,189,No,3,Delhi
+2026-02-11,DS-Bangalore-02,Parle-G 800g,490,95,Yes,40,Bangalore
+2026-02-12,DS-Hyderabad-05,Amul Butter 500g,360,68,Yes,27,Hyderabad
+2026-02-13,DS-Pune-04,Maggi 2-Min Noodles,600,124,Yes,38,Pune
+2026-02-14,DS-Chennai-08,Surf Excel 1kg,440,172,No,4,Chennai
+2026-02-15,DS-Ahmedabad-06,Amul Cheese 200g,330,62,Yes,25,Ahmedabad
+2026-02-16,DS-Kolkata-09,Parle-G 800g,480,94,Yes,36,Kolkata
+2026-02-17,DS-Jaipur-11,Maggi 2-Min Noodles,350,58,Yes,26,Jaipur
+2026-02-18,DS-Mumbai-03,Amul Butter 500g,410,84,Yes,33,Mumbai
+2026-02-19,DS-Delhi-07,Surf Excel 1kg,400,183,No,3,Delhi
+2026-02-20,DS-Bangalore-02,Parle-G 800g,500,101,Yes,41,Bangalore
+2026-02-21,DS-Hyderabad-05,Amul Cheese 200g,350,73,Yes,29,Hyderabad
+2026-02-22,DS-Pune-04,Maggi 2-Min Noodles,580,121,Yes,37,Pune
+2026-02-23,DS-Chennai-08,Surf Excel 1kg,460,161,No,4,Chennai
+2026-02-24,DS-Ahmedabad-06,Amul Butter 500g,370,74,Yes,31,Ahmedabad
+2026-02-25,DS-Kolkata-09,Parle-G 800g,490,96,Yes,38,Kolkata
+2026-02-26,DS-Jaipur-11,Maggi 2-Min Noodles,340,57,Yes,25,Jaipur
+2026-02-27,DS-Mumbai-03,Amul Cheese 200g,270,37,Yes,28,Mumbai
+2026-02-28,DS-Delhi-07,Surf Excel 1kg,430,194,No,2,Delhi
+2026-03-01,DS-Bangalore-02,Parle-G 800g,530,108,Yes,43,Bangalore
+2026-03-02,DS-Hyderabad-05,Amul Butter 500g,370,69,Yes,28,Hyderabad
+2026-03-03,DS-Pune-04,Maggi 2-Min Noodles,620,129,Yes,39,Pune
+2026-03-04,DS-Chennai-08,Surf Excel 1kg,480,178,No,5,Chennai
+2026-03-05,DS-Ahmedabad-06,Amul Cheese 200g,340,64,Yes,26,Ahmedabad
+2026-03-06,DS-Kolkata-09,Parle-G 800g,500,99,Yes,37,Kolkata
+2026-03-07,DS-Jaipur-11,Maggi 2-Min Noodles,360,60,Yes,27,Jaipur

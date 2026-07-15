@@ -1,0 +1,7 @@
+SKU_Name,Component_Type,Plating_Type,Net_Grams_Per_Unit
+Standard-Y,Motherboard,Gold,0.25
+Standard-Y,Motherboard,Silver,10
+Ultra-X,Motherboard,Gold,0.45
+Ultra-X,Motherboard,Silver,18.5
+Eco-Z,LogicBoard,Copper,45
+Eco-Z,LogicBoard,Silver,5.5
