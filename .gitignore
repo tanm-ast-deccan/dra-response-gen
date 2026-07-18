@@ -42,7 +42,7 @@ dist/
 *.p12
 secrets.json
 credentials.json
-gcp_key.json
+gcp_key*.json
 
 
 # ─── OS ───────────────────────────────────────────────────
@@ -107,7 +107,7 @@ checkpoints/
 runs/
 wandb/
 mlruns/
-output/
+output*/
 input/
 
 # ─── Misc ─────────────────────────────────────────────────
@@ -120,8 +120,11 @@ scratch.py
 tmp/
 temp/results/
 /tmp/dra_staging/
+results/
+staging/
+output/
 results*/
 reports*/
 recovered_files/
 dispatch*/
-stging/
+staging*/

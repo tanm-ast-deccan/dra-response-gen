@@ -35,6 +35,13 @@ _LIB_HINT = {
     "xlsx": "openpyxl or pandas (with the openpyxl engine)",
     "docx": "python-docx (from docx import Document)",
     "pptx": "python-pptx (from pptx import Presentation)",
+    "pdf":  "reportlab (from reportlab.lib.pagesizes import letter; "
+            "from reportlab.platypus import SimpleDocTemplate, Paragraph, Table) "
+            "or fpdf2 (from fpdf import FPDF)",
+    "csv":  "the standard csv module (import csv) or pandas.DataFrame.to_csv",
+    "txt":  "a plain open(path, 'w') write — no special library needed",
+    "json": "the standard json module (import json; json.dump)",
+    "md":   "a plain open(path, 'w') write — no special library needed",
 }
 
 
@@ -242,6 +249,11 @@ _LIB_KEYWORDS = {
     "xlsx": ["openpyxl", "pandas", "xlsxwriter"],
     "docx": ["docx", "Document"],
     "pptx": ["pptx", "Presentation"],
+    "pdf":  ["reportlab", "fpdf", "FPDF", "canvas", "SimpleDocTemplate"],
+    "csv":  ["csv", "to_csv", "writer", "DictWriter"],
+    "txt":  ["open(", "write("],
+    "json": ["json", "dump"],
+    "md":   ["open(", "write("],
 }
 
 

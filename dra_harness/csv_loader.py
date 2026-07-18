@@ -93,6 +93,11 @@ COLUMN_ALIASES: dict[str, list[str]] = {
     "drive_url": ["drive_link", "drive link", "drive", "drive_url",
                   "drive url", "gdrive", "gdrive_url", "gdrive url",
                   "files", "attachments", "file link", "google drive"],
+    # Optional — explicit deliverable format authored by the SME (APEX-style).
+    # When present, this is AUTHORITATIVE and the prompt-regex is only a fallback.
+    "output_format": ["output_format", "output format", "deliverable",
+                      "deliverable_format", "deliverable format", "artifact",
+                      "output_type", "output type", "expected_output"],
     # Optional — only used to make a nicer auto-generated id when task_id is blank.
     "sme_name": ["full_name", "full name", "name", "poc name", "poc_name",
                  "sme_name", "sme name", "sme", "author"],
@@ -106,12 +111,15 @@ REQUIRED_FIELDS = {"task_id", "prompt"}
 # Detects when a prompt explicitly asks for a generated file deliverable.
 # Sentence-level + verb-gated to avoid matching input-file references.
 
-_OUTPUT_VERBS = r'(?:present|output|create|produce|generate|deliver|build)'
+_OUTPUT_VERBS = r'(?:present|output|create|produce|generate|deliver|build|save|write|export)'
 
 _FORMAT_PATTERNS: dict[str, re.Pattern] = {
-    "xlsx": re.compile(rf'(?i)\b{_OUTPUT_VERBS}\b[^.!?\n]{{0,120}}\bexcel\b'),
+    "xlsx": re.compile(rf'(?i)\b{_OUTPUT_VERBS}\b[^.!?\n]{{0,120}}\b(?:excel|xlsx|spreadsheet|workbook)\b'),
     "docx": re.compile(r'(?i)\bword\s+doc(?:ument)?\b'),
-    "pptx": re.compile(rf'(?i)\b{_OUTPUT_VERBS}\b[^.!?\n]{{0,120}}\bpowerpoint\b'),
+    "pptx": re.compile(rf'(?i)\b{_OUTPUT_VERBS}\b[^.!?\n]{{0,120}}\b(?:powerpoint|pptx|slide\s?deck|presentation)\b'),
+    "pdf":  re.compile(rf'(?i)\b{_OUTPUT_VERBS}\b[^.!?\n]{{0,120}}\b(?:pdf)\b'),
+    "csv":  re.compile(rf'(?i)\b{_OUTPUT_VERBS}\b[^.!?\n]{{0,120}}\b(?:csv|comma[- ]separated)\b'),
+    "txt":  re.compile(rf'(?i)\b{_OUTPUT_VERBS}\b[^.!?\n]{{0,120}}\b(?:text\s+file|\.txt|plain\s+text)\b'),
 }
 
 
@@ -190,6 +198,7 @@ def load_csv(csv_path: str) -> list[dict]:
                 "prompt":    prompt,
                 "drive_url": (raw.get(col.get("drive_url", ""), "") or "").strip(),
                 "sme_name":  sme_name,
+                "output_format": (raw.get(col.get("output_format", ""), "") or "").strip(),
             })
 
     logger.info("Loaded %d valid rows from %s", len(rows), csv_path)
@@ -206,9 +215,33 @@ def row_to_package(
         # Keep the raw URL as a placeholder when not resolving to local files.
         file_paths = [row["drive_url"]]
 
-    output_formats = detect_output_formats(row["prompt"])
+    # Deliverable format: explicit SME-authored column wins (APEX-style, robust);
+    # fall back to prompt-regex only when the column is absent/blank.
+    explicit = (row.get("output_format") or "").strip().lower()
+    if explicit:
+        # normalize common spellings/synonyms → canonical extension
+        norm = {
+            "excel": "xlsx", "xls": "xlsx", "xlsx": "xlsx", "spreadsheet": "xlsx",
+            "workbook": "xlsx",
+            "word": "docx", "docx": "docx", "doc": "docx",
+            "powerpoint": "pptx", "pptx": "pptx", "slides": "pptx", "deck": "pptx",
+            "pdf": "pdf",
+            "csv": "csv",
+            "txt": "txt", "text": "txt",
+            "json": "json", "md": "md", "markdown": "md",
+        }
+        output_formats = []
+        for tok in re.split(r"[,\s/|]+", explicit):
+            fmt = norm.get(tok.strip())
+            if fmt and fmt not in output_formats:
+                output_formats.append(fmt)
+        if not output_formats:  # column present but unrecognized → fall back
+            output_formats = detect_output_formats(row["prompt"])
+    else:
+        output_formats = detect_output_formats(row["prompt"])
     if output_formats:
-        logger.info("[%s] Output formats detected: %s", row["task_id"], output_formats)
+        logger.info("[%s] Output formats: %s%s", row["task_id"], output_formats,
+                    " (explicit)" if explicit else " (detected)")
 
     return PromptPackage(
         task_id=row["task_id"],

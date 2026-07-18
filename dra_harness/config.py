@@ -77,10 +77,10 @@ class GenParams:
     temperature: float = 1.0
     top_p: float = 1.0
     max_tokens: int = 16000
-    reasoning_effort: str = "medium"  # "", "low", "medium", "high", "no_think"
+    reasoning_effort: str = "high"   # APEX "Thinking=High" parity
 
     # ── Agentic loop ──────────────────────────────────────────────────
-    max_turns: int = 150            # max tool-calling rounds per task
+    max_turns: int = 250            # APEX parity (was 150; last run used 20)
 
     # ── Web search (via OpenRouter) ───────────────────────────────────
     web_search: bool = False
@@ -92,14 +92,14 @@ class GenParams:
     tool_choice: str = "auto"     # "auto" | "none" | "required"
 
     # ── File creation (local code execution) ──────────────────────────
-    file_output: bool = False      # honor task.output_formats when set
+    file_output: bool = True       # honor task.output_formats when set
     file_fix_attempts: int = 3    # retries when generated code fails
     code_exec_timeout: int = 300  # seconds for the local subprocess
 
     # ── Reliability ───────────────────────────────────────────────────
     request_timeout: int = 1800    # per-request timeout (seconds)
     max_retries: int = 2          # transient-error retries per request
-    max_cost_usd: float = 5.0     # budget guard per task/pass
+    max_cost_usd: float = 50.0    # budget guard per task/pass (safety net)
 
     def merged(self, overrides: dict) -> "GenParams":
         """Return a copy with the given field overrides applied."""
@@ -140,7 +140,10 @@ class PipelineConfig:
 
     # ── Per-provider knobs ────────────────────────────────────────────
     defaults: GenParams = field(default_factory=GenParams)
-    agent_overrides: dict = field(default_factory=dict)   # {provider: {field: val}}
+    # Qwen 27B emits empty output at temp=1.0; it needs 0.3 for agentic tasks.
+    agent_overrides: dict = field(
+        default_factory=lambda: {"qwen": {"temperature": 0.3}}
+    )   # {provider: {field: val}}
     model_overrides: dict = field(default_factory=dict)   # {provider: "slug"}
 
     # ── Resolution helpers ────────────────────────────────────────────

@@ -89,11 +89,15 @@ def python_execute(code: str) -> str:
 
     Use for calculations, data analysis, file processing, chart generation,
     and creating output files. Libraries available: pandas, numpy, scipy,
-    openpyxl (xlsx), python-docx (docx), python-pptx (pptx), matplotlib,
-    pdfplumber, json, csv, os. The working directory contains the task
-    input files. To create output files (xlsx, docx, pptx, pdf), use the
-    appropriate library and save to the current directory. Print results
-    to stdout to see them.
+    openpyxl (xlsx), python-docx (docx), python-pptx (pptx), reportlab and
+    fpdf2 (pdf), matplotlib, pdfplumber (read pdf), json, csv, os. The working
+    directory contains the task input files. To create output files:
+      - xlsx: openpyxl or pandas.to_excel  → wb.save('output.xlsx')
+      - pdf:  reportlab.SimpleDocTemplate or fpdf2  → doc.build(...) / pdf.output(...)
+      - csv:  the csv module or pandas.to_csv('output.csv')
+      - txt/md/json: plain open('name.ext','w').write(...) / json.dump
+    Save every output to the current directory with a plain filename (do not
+    cd elsewhere). Print results to stdout to see them.
     """
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".py", dir=STAGING_DIR, delete=False
@@ -175,36 +179,86 @@ def write_file(path: str, content: str) -> str:
         return f"[error] writing {path}: {e}"
 
 
-@mcp.tool()
-def web_search(query: str, max_results: int = 5) -> str:
-    """Search the web using DuckDuckGo and return top results.
+def _serper_search(query: str, max_results: int) -> list[dict]:
+    """Google results via Serper. Returns [] if no key or on failure."""
+    import os as _os
+    key = _os.environ.get("SERPER_API_KEY")
+    if not key:
+        return []
+    import time
+    import requests
+    for attempt in range(2):
+        try:
+            resp = requests.post(
+                "https://google.serper.dev/search",
+                headers={"X-API-KEY": key, "Content-Type": "application/json"},
+                json={"q": query, "num": max_results},
+                timeout=20,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            out = []
+            ab = data.get("answerBox")
+            if ab:
+                snip = ab.get("answer") or ab.get("snippet") or ""
+                if snip:
+                    out.append({"title": ab.get("title", "Answer box"),
+                                "href": ab.get("link", ""), "body": snip})
+            for item in data.get("organic", [])[:max_results]:
+                out.append({"title": item.get("title", ""),
+                            "href": item.get("link", ""),
+                            "body": item.get("snippet", "")})
+            return out
+        except Exception as e:
+            if attempt == 0:
+                time.sleep(1.5)
+                continue
+            logger.warning("serper search failed: %s", e)
+            return []
+    return []
 
-    Use for: finding current data, verifying facts, retrieving
-    external information not available in the provided files.
-    Returns titles, URLs, and snippets.
-    """
+
+def _ddg_search(query: str, max_results: int) -> list[dict]:
     try:
         from duckduckgo_search import DDGS
     except ImportError:
-        return "[error] pip install duckduckgo-search"
-
+        return []
     try:
         with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=max_results))
-
-        if not results:
-            return f"No results for '{query}'"
-
-        parts = []
-        for i, r in enumerate(results, 1):
-            parts.append(
-                f"[{i}] {r.get('title', '')}\n"
-                f"    URL: {r.get('href', '')}\n"
-                f"    {r.get('body', '')}"
-            )
-        return "\n\n".join(parts)
+            return list(ddgs.text(query, max_results=max_results))
     except Exception as e:
-        return f"[error] search failed: {e}"
+        logger.warning("ddg search failed: %s", e)
+        return []
+
+
+@mcp.tool()
+def web_search(query: str, max_results: int = 5) -> str:
+    """Search the web and return top results (titles, URLs, snippets).
+
+    Uses Google (via Serper) when SERPER_API_KEY is set — far better on
+    institutional/government/data sources — and falls back to DuckDuckGo
+    otherwise or if Serper returns nothing. Use for finding current data,
+    verifying facts, or retrieving external information not in the files.
+    """
+    backend = "serper" if os.environ.get("SERPER_API_KEY") else "duckduckgo"
+    results = _serper_search(query, max_results) if backend == "serper" else []
+    if not results:
+        ddg = _ddg_search(query, max_results)
+        if ddg:
+            backend = "serper->ddg" if backend == "serper" else "duckduckgo"
+            results = ddg
+
+    if not results:
+        return f"[web_search backend={backend}] No results for '{query}'"
+
+    parts = [f"[web_search backend={backend}] {len(results)} result(s) for '{query}':"]
+    for i, r in enumerate(results, 1):
+        parts.append(
+            f"[{i}] {r.get('title', '')}\n"
+            f"    URL: {r.get('href', '')}\n"
+            f"    {r.get('body', '')}"
+        )
+    return "\n\n".join(parts)
 
 
 @mcp.tool()
