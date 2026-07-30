@@ -109,6 +109,11 @@ wandb/
 mlruns/
 output*/
 input/
+runs_dir/
+scratch/
+SME_data/
+sme_upload_out/
+
 
 # ─── Misc ─────────────────────────────────────────────────
 scratch.py

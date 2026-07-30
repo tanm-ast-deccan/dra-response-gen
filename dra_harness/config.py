@@ -76,7 +76,7 @@ class GenParams:
     # ── Sampling ──────────────────────────────────────────────────────
     temperature: float = 1.0
     top_p: float = 1.0
-    max_tokens: int = 16000
+    max_tokens: int = 32000
     reasoning_effort: str = "high"   # APEX "Thinking=High" parity
 
     # ── Agentic loop ──────────────────────────────────────────────────
@@ -133,6 +133,8 @@ class PipelineConfig:
     staging_dir: str = "./staging"     # where GDrive files are downloaded
     output_dir: str = "./results"      # where results JSON + files are written
     resolve_files: bool = False        # download GDrive links to local files
+    run_root: str = "./runs_dir"        # single root; each run gets a timestamped subfolder
+    run_id: Optional[str] = None    # set at run start; names the per-run subfolder
 
     # ── OpenRouter ────────────────────────────────────────────────────
     api_key: Optional[str] = None      # falls back to OPENROUTER_API_KEY

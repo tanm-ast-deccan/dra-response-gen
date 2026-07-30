@@ -68,6 +68,15 @@ async def run_batch(
     """Run the full pipeline for a CSV and return a results dict."""
     load_env()
 
+    from datetime import datetime, timezone
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    prov = "_".join(cfg.providers)
+    cfg.run_id = f"run_{ts}_{prov}"                       # start-timestamp, as you chose
+    run_dir = os.path.join(cfg.run_root, cfg.run_id)
+    cfg.staging_dir = os.path.join(run_dir, "staging")
+    cfg.output_dir  = run_dir                              # trace.json lands here
+    os.makedirs(cfg.staging_dir, exist_ok=True)
+
     packages = load_packages(
         csv_path,
         resolve_files=cfg.resolve_files,
@@ -148,19 +157,35 @@ def _summarize(run_dicts: list[dict], cfg: PipelineConfig) -> dict:
         "by_provider": by_provider,
     }
 
-
 def save_results(output: dict, path: str | None = None) -> str:
-    """Write the results dict to JSON and return the path."""
     out_dir = output["config"].get("output_dir", "./results")
     if path is None:
-        task_ids = list(set(r.get("task_id", "") for r in output.get("results", [])))
-        providers = list(set(r.get("provider", "") for r in output.get("results", [])))
-        task_str = "_".join(task_ids[:3])  # cap at 3 to avoid huge filenames
-        prov_str = "_".join(providers)
-        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        path = os.path.join(out_dir, f"results_{task_str}_{prov_str}_{ts}.json")
+        results = output.get("results", [])
+        providers = sorted(set(r.get("provider", "") for r in results))
+        prov_str = "_".join(providers) or "noprov"
+        n = len(set(r.get("task_id", "") for r in results))
+        # start-time from the run, not "now", so the file name matches the run
+        ts = output.get("started_at", "").replace(":", "").replace("-", "")[:15] or \
+             datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        path = os.path.join(out_dir, f"run_{ts}_{prov_str}_{n}tasks.json")
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2, ensure_ascii=False, default=str)
     logger.info("Saved results → %s", path)
     return path
+
+# def save_results(output: dict, path: str | None = None) -> str:
+#     """Write the results dict to JSON and return the path."""
+#     out_dir = output["config"].get("output_dir", "./results")
+#     if path is None:
+#         task_ids = list(set(r.get("task_id", "") for r in output.get("results", [])))
+#         providers = list(set(r.get("provider", "") for r in output.get("results", [])))
+#         task_str = "_".join(task_ids[:3])  # cap at 3 to avoid huge filenames
+#         prov_str = "_".join(providers)
+#         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+#         path = os.path.join(out_dir, f"results_{task_str}_{prov_str}_{ts}.json")
+#     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+#     with open(path, "w", encoding="utf-8") as f:
+#         json.dump(output, f, indent=2, ensure_ascii=False, default=str)
+#     logger.info("Saved results → %s", path)
+#     return path

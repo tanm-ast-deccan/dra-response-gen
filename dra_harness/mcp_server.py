@@ -29,7 +29,7 @@ mcp = FastMCP(
     ),
 )
 
-STAGING_DIR = os.environ.get("INDRAYUDH_STAGING_DIR", os.getcwd())
+STAGING_DIR = os.environ.get("DRA_AGENT_WORKDIR", os.getcwd())
 
 
 # ─── Python execution ─────────────────────────────────────────────────────────

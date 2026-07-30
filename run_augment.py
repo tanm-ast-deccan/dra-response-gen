@@ -30,14 +30,38 @@ NEW_COLS = [
     "corrected_solution_logic", "golden_deliverable", "augmented_verifiers",
     "dag_json", "crux_verifier_ids", "crux_shapley_weights_json",
     "base_weights_json", "expected_values_json", "audit_verdict", "changes_applied_json",
-    "judgment_pending_json", "augment_error",
+    "judgment_pending_json", "skipped_inputs", "scoreable", "not_scoreable_reason",
+    "augment_error",
 ]
+
+
+def _blank_new_cols(row):
+    """Guarantee every augmented column exists on a row (even on failure) so the
+    CSV never silently loses columns for rows that hit the except branch."""
+    for c in NEW_COLS:
+        row.setdefault(c, "")
+    return row
 
 
 def load_rows(path):
     with open(path, encoding="utf-8-sig") as f:
         r = csv.DictReader(f)
-        return (r.fieldnames or []), list(r)
+        raw_fields = r.fieldnames or []
+        rows = list(r)
+    # Drop phantom columns from trailing commas in the source header (Excel
+    # exports often leave a long run of empty-named columns). Keep only named
+    # columns; strip the corresponding keys from every row so they don't
+    # re-serialize into the output CSV.
+    fields = [h for h in raw_fields if h and h.strip()]
+    dropped = [h for h in raw_fields if not (h and h.strip())]
+    if dropped:
+        print(f"[load] dropped {len(dropped)} empty/unnamed source column(s)",
+              file=sys.stderr)
+        for row in rows:
+            for k in list(row.keys()):
+                if k is None or not str(k).strip():
+                    row.pop(k, None)
+    return fields, rows
 
 
 def main():
@@ -81,24 +105,40 @@ def main():
         print(f"[{i}] augmenting {task_id} ...", flush=True)
 
         # fetch input files (raw) so the auditor's provenance layer runs
-        files_text, files_names = "", []
+        files_text, files_names, skipped = "", [], []
         if not args.no_files:
             dl = get_field(row, hmap, "drive_link")
             if dl.strip():
                 try:
                     from src.gdrive_raw_fetcher import fetch_gdrive_folder_raw
-                    files_text, files_names = fetch_gdrive_folder_raw(dl)
+                    files_text, files_names, skipped = fetch_gdrive_folder_raw(dl)
+                    if skipped:
+                        print(f"    !! SKIPPED INPUTS (golden may be degraded): {skipped}")
                 except Exception as e:
                     print(f"    drive fetch failed: {e}")
 
         try:
             res = augment_task(row, hmap, input_files_text=files_text,
-                               input_files_names=files_names, model_name=model)
+                               input_files_names=files_names, model_name=model,
+                               skipped_inputs=skipped)
             rd = res.to_dict()
         except Exception as e:
             print(f"    AUGMENT FAILED: {e}")
+            _blank_new_cols(row)
+            row["skipped_inputs"] = json.dumps(skipped, ensure_ascii=False)
+            row["scoreable"] = False
+            row["not_scoreable_reason"] = f"augment crashed: {e}"
             row["augment_error"] = str(e)
             out_rows.append(row); continue
+
+        # permanent safeguard: lossless per-task JSON so the CSV can always be
+        # rebuilt (via rebuild_csv.py) without re-calling Opus.
+        try:
+            json.dump(rd, open(os.path.join(args.out_dir, f"{task_id}_augment.json"),
+                               "w", encoding="utf-8"),
+                      ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"    warn: could not write {task_id}_augment.json: {e}")
 
         # fill new columns
         row["corrected_solution_logic"] = rd["corrected_solution_logic"]
@@ -112,6 +152,9 @@ def main():
         row["audit_verdict"] = rd["audit_verdict"]
         row["changes_applied_json"] = json.dumps(rd["changes_applied"], ensure_ascii=False)
         row["judgment_pending_json"] = json.dumps(rd["judgment_changes_pending_sme"], ensure_ascii=False)
+        row["skipped_inputs"] = json.dumps(rd.get("skipped_inputs", []), ensure_ascii=False)
+        row["scoreable"] = rd.get("scoreable", True)
+        row["not_scoreable_reason"] = rd.get("not_scoreable_reason", "")
         row["augment_error"] = rd.get("error", "")
         out_rows.append(row)
 
@@ -123,6 +166,11 @@ def main():
               + (f" | ERROR {rd['error']}" if rd.get("error") else ""))
 
     out_csv = os.path.join(args.out_dir, "augmented_prompt_packages.csv")
+    # Diagnostic: confirm rows carry the augmented keys before writing.
+    if out_rows:
+        present = [c for c in NEW_COLS if c in out_rows[0]]
+        print(f"[debug] out_rows={len(out_rows)} | new cols on row0: "
+              f"{len(present)}/{len(NEW_COLS)} | header cols={len(out_fields)}")
     with open(out_csv, "w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=out_fields, extrasaction="ignore")
         w.writeheader()

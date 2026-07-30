@@ -125,7 +125,7 @@ def _python_execute(code: str) -> str:
     import subprocess
     import tempfile
 
-    staging = os.environ.get("INDRAYUDH_STAGING_DIR", os.getcwd())
+    staging = os.environ.get("DRA_AGENT_WORKDIR", os.getcwd())
 
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".py", dir=staging, delete=False
@@ -181,7 +181,7 @@ def _python_execute(code: str) -> str:
 def _bash_execute(command: str) -> str:
     import subprocess
 
-    staging = os.environ.get("INDRAYUDH_STAGING_DIR", os.getcwd())
+    staging = os.environ.get("DRA_AGENT_WORKDIR", os.getcwd())
 
     try:
         result = subprocess.run(
@@ -224,27 +224,50 @@ def _bash_execute(command: str) -> str:
         "required": ["path"],
     },
 )
-def _read_file(path: str) -> str:
-    staging = os.environ.get("INDRAYUDH_STAGING_DIR", os.getcwd())
 
-    # Resolve relative paths against staging dir
+def _read_file(path: str, max_chars: int = 0) -> str:
+    """Read a file to text for the model. Lossless by default (max_chars=0 = no
+    truncation). Pass a positive max_chars only to bound a pathological input.
+
+    Supported: text formats, .json (parsed + pretty-printed), .md, .xlsx/.xls,
+    .pdf, .docx, .pptx (slides + tables + speaker notes, notes clearly labeled).
+    """
+    import os
+
+    staging = os.environ.get("INDRAYUDH_STAGING_DIR", os.getcwd())
     if not os.path.isabs(path):
         path = os.path.join(staging, path)
-
     if not os.path.isfile(path):
         return f"[error] file not found: {path}"
 
     ext = os.path.splitext(path)[1].lower()
-    max_chars = 50000
+
+    def cap(s: str) -> str:
+        # max_chars <= 0 means lossless (no truncation).
+        if max_chars and len(s) > max_chars:
+            return s[:max_chars] + f"\n[... truncated at {max_chars} chars ...]"
+        return s
 
     try:
-        # Plain text formats
-        if ext in (".txt", ".csv", ".json", ".md", ".py", ".js", ".html",
-                   ".xml", ".yaml", ".yml", ".toml", ".log", ".tsv", ".sql"):
+        # ---- JSON: parse + pretty-print (structured, not a raw wall of text) ----
+        if ext == ".json":
+            import json
             with open(path, "r", encoding="utf-8", errors="replace") as f:
-                return f.read()[:max_chars]
+                raw = f.read()
+            try:
+                obj = json.loads(raw)
+                return cap(json.dumps(obj, indent=2, ensure_ascii=False))
+            except json.JSONDecodeError:
+                # not valid JSON — return raw so nothing is lost
+                return cap(raw)
 
-        # Excel
+        # ---- Plain-text formats (now includes .md explicitly) ----
+        if ext in (".txt", ".csv", ".md", ".markdown", ".py", ".js", ".html",
+                   ".xml", ".yaml", ".yml", ".toml", ".log", ".tsv", ".sql", ".rst", ".ini"):
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                return cap(f.read())
+
+        # ---- Excel ----
         if ext in (".xlsx", ".xls"):
             import openpyxl
             wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
@@ -255,42 +278,142 @@ def _read_file(path: str) -> str:
                 for row in ws.iter_rows(values_only=True):
                     parts.append("\t".join(str(c) if c is not None else "" for c in row))
             wb.close()
-            return "\n".join(parts)[:max_chars]
+            return cap("\n".join(parts))
 
-        # PDF
+        # ---- PDF ----
         if ext == ".pdf":
             try:
                 import pdfplumber
-                text_parts = []
-                with pdfplumber.open(path) as pdf:
-                    for page in pdf.pages:
-                        t = page.extract_text()
-                        if t:
-                            text_parts.append(t)
-                return "\n\n".join(text_parts)[:max_chars] or "[no extractable text in PDF]"
             except ImportError:
                 return "[error] pdfplumber not installed — pip install pdfplumber"
+            text_parts = []
+            with pdfplumber.open(path) as pdf:
+                for i, page in enumerate(pdf.pages, 1):
+                    t = page.extract_text()
+                    if t:
+                        text_parts.append(f"=== Page {i} ===\n{t}")
+                    # also pull tables, which extract_text can garble
+                    for ti, table in enumerate(page.extract_tables() or [], 1):
+                        rows = ["\t".join((c or "") for c in row) for row in table]
+                        if rows:
+                            text_parts.append(f"=== Page {i} Table {ti} ===\n" + "\n".join(rows))
+            return cap("\n\n".join(text_parts)) or "[no extractable text in PDF]"
 
-        # Word
+        # ---- Word ----
         if ext == ".docx":
             try:
                 from docx import Document
-                doc = Document(path)
-                text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
-                # Also extract tables
-                for table in doc.tables:
-                    for row in table.rows:
-                        text += "\n" + "\t".join(c.text.strip() for c in row.cells)
-                return text[:max_chars] or "[empty document]"
             except ImportError:
                 return "[error] python-docx not installed — pip install python-docx"
+            doc = Document(path)
+            parts = [p.text for p in doc.paragraphs if p.text.strip()]
+            for table in doc.tables:
+                for row in table.rows:
+                    parts.append("\t".join(c.text.strip() for c in row.cells))
+            return cap("\n".join(parts)) or "[empty document]"
 
-        # Fallback: try reading as text
+        # ---- PowerPoint: slides + tables + speaker notes (notes labeled) ----
+        if ext in (".pptx", ".pptm"):
+            try:
+                from pptx import Presentation
+            except ImportError:
+                return "[error] python-pptx not installed — pip install python-pptx"
+            prs = Presentation(path)
+            parts = []
+            for si, slide in enumerate(prs.slides, 1):
+                parts.append(f"=== Slide {si} ===")
+                for shape in slide.shapes:
+                    # text frames (titles, bodies, text boxes)
+                    if shape.has_text_frame:
+                        txt = "\n".join(p.text for p in shape.text_frame.paragraphs if p.text.strip())
+                        if txt.strip():
+                            parts.append(txt)
+                    # tables
+                    if shape.has_table:
+                        tbl = shape.table
+                        for row in tbl.rows:
+                            parts.append("\t".join(cell.text.strip() for cell in row.cells))
+                # speaker notes — clearly labeled so a reviewer can see (and audit) them
+                if slide.has_notes_slide:
+                    notes = slide.notes_slide.notes_text_frame.text
+                    if notes and notes.strip():
+                        parts.append(f"--- Speaker notes (slide {si}) ---\n{notes.strip()}")
+            return cap("\n".join(parts)) or "[no extractable content in presentation]"
+
+        # ---- Fallback: read as text ----
         with open(path, "r", encoding="utf-8", errors="replace") as f:
-            return f.read()[:max_chars]
+            return cap(f.read())
 
     except Exception as e:
         return f"[error] reading {path}: {e}"
+    
+# def _read_file(path: str) -> str:
+#     staging = os.environ.get("DRA_AGENT_WORKDIR", os.getcwd())
+
+#     # Resolve relative paths against staging dir
+#     if not os.path.isabs(path):
+#         path = os.path.join(staging, path)
+
+#     if not os.path.isfile(path):
+#         return f"[error] file not found: {path}"
+
+#     ext = os.path.splitext(path)[1].lower()
+#     max_chars = 50000
+
+#     try:
+#         # Plain text formats
+#         if ext in (".txt", ".csv", ".json", ".md", ".py", ".js", ".html",
+#                    ".xml", ".yaml", ".yml", ".toml", ".log", ".tsv", ".sql"):
+#             with open(path, "r", encoding="utf-8", errors="replace") as f:
+#                 return f.read()[:max_chars]
+
+#         # Excel
+#         if ext in (".xlsx", ".xls"):
+#             import openpyxl
+#             wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+#             parts = []
+#             for sn in wb.sheetnames:
+#                 ws = wb[sn]
+#                 parts.append(f"=== Sheet: {sn} ===")
+#                 for row in ws.iter_rows(values_only=True):
+#                     parts.append("\t".join(str(c) if c is not None else "" for c in row))
+#             wb.close()
+#             return "\n".join(parts)[:max_chars]
+
+#         # PDF
+#         if ext == ".pdf":
+#             try:
+#                 import pdfplumber
+#                 text_parts = []
+#                 with pdfplumber.open(path) as pdf:
+#                     for page in pdf.pages:
+#                         t = page.extract_text()
+#                         if t:
+#                             text_parts.append(t)
+#                 return "\n\n".join(text_parts)[:max_chars] or "[no extractable text in PDF]"
+#             except ImportError:
+#                 return "[error] pdfplumber not installed — pip install pdfplumber"
+
+#         # Word
+#         if ext == ".docx":
+#             try:
+#                 from docx import Document
+#                 doc = Document(path)
+#                 text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+#                 # Also extract tables
+#                 for table in doc.tables:
+#                     for row in table.rows:
+#                         text += "\n" + "\t".join(c.text.strip() for c in row.cells)
+#                 return text[:max_chars] or "[empty document]"
+#             except ImportError:
+#                 return "[error] python-docx not installed — pip install python-docx"
+
+#         # Fallback: try reading as text
+#         with open(path, "r", encoding="utf-8", errors="replace") as f:
+#             return f.read()[:max_chars]
+
+#     except Exception as e:
+#         return f"[error] reading {path}: {e}"
 
 
 # ─── Write file ───────────────────────────────────────────────────────────────
@@ -318,7 +441,7 @@ def _read_file(path: str) -> str:
     },
 )
 def _write_file(path: str, content: str) -> str:
-    staging = os.environ.get("INDRAYUDH_STAGING_DIR", os.getcwd())
+    staging = os.environ.get("DRA_AGENT_WORKDIR", os.getcwd())
 
     if not os.path.isabs(path):
         path = os.path.join(staging, path)
@@ -353,7 +476,7 @@ def _write_file(path: str, content: str) -> str:
     },
 )
 def _list_directory(path: str = ".") -> str:
-    staging = os.environ.get("INDRAYUDH_STAGING_DIR", os.getcwd())
+    staging = os.environ.get("DRA_AGENT_WORKDIR", os.getcwd())
 
     if not os.path.isabs(path):
         path = os.path.join(staging, path)
@@ -505,7 +628,7 @@ def _calculator(expression: str) -> str:
     },
 )
 def _search_in_file(path: str, query: str, context_lines: int = 3) -> str:
-    staging = os.environ.get("INDRAYUDH_STAGING_DIR", os.getcwd())
+    staging = os.environ.get("DRA_AGENT_WORKDIR", os.getcwd())
     if not os.path.isabs(path):
         path = os.path.join(staging, path)
 

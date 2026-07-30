@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-sme_pool.py — task inventory, selection, and (optional) input validation for an
-SME batch. Folds in the old ib_select_and_stage.py selection funnel and the old
-check_inputs.py input gate, generalized: no hardcoded task lists, model names,
-Drive IDs, or credentials paths.
+sme_pool.py — task inventory and selection for an SME batch. Folds in the old
+ib_select_and_stage.py selection funnel, generalized: no hardcoded task lists,
+model names, Drive IDs, or credentials paths.
 
 Reads the per-task augment JSON dumps, reports the real task inventory (clean
 tsk_<10digits> IDs), filters to a scoreable/gradeable pool, SELECTS a shortlist
-by one of two strategies, and optionally FLAGS tasks whose Drive input folder
-contains risky input types (.pptx/.json).
+by one of two strategies, and tags each shortlisted task with an audit-coverage
+flag derived from the auditor's own leakage/provenance signals.
 
 Selection strategies (--strategy):
   rank       (default) verdict-priority then crux size; top --n. Simple.
@@ -38,8 +37,13 @@ Usage:
 import argparse, csv, glob, json, os, re
 
 CLEAN = re.compile(r"^tsk_\d{10}$")
-GRADEABLE_VERDICTS = {"CONFIRMED", "SALVAGEABLE"}
-VERDICT_ORDER = {"CONFIRMED": 0, "SALVAGEABLE": 1, "BROKEN": 2, "UNGRADEABLE": 3}
+# Verdicts use the auditor's own vocabulary (see auditor_templates.py):
+#   SOUND | SALVAGEABLE | BROKEN | UNGRADEABLE | NON_DETERMINISTIC
+# "CONFIRMED" was an older name for the clean-pass verdict and is kept as an
+# alias so pre-rename augment data still classifies correctly.
+GRADEABLE_VERDICTS = {"SOUND", "CONFIRMED", "SALVAGEABLE"}
+VERDICT_ORDER = {"SOUND": 0, "CONFIRMED": 0, "SALVAGEABLE": 1,
+                 "BROKEN": 2, "UNGRADEABLE": 3, "NON_DETERMINISTIC": 4}
 DELIV = re.compile(r"\.(docx|xlsx|pdf|pptx)$", re.I)
 SCRATCH = re.compile(r"(ocr_output|_test\.|/test\.|intermediate|tmp|scratch|_response\.docx$)", re.I)
 
@@ -48,24 +52,45 @@ SCRATCH = re.compile(r"(ocr_output|_test\.|/test\.|intermediate|tmp|scratch|_res
 # source-CSV helpers (domain + drive link), paths passed in
 # ---------------------------------------------------------------------------
 
+def _resolve_col(fieldnames, *candidates):
+    """Case-insensitive resolve of the first matching column name."""
+    low = {c.lower().strip(): c for c in (fieldnames or [])}
+    for cand in candidates:
+        hit = low.get(cand.lower())
+        if hit:
+            return hit
+    return None
+
 def load_source_fields(csv_path):
-    """task_id -> {domain, drive_link} from the source CSV (best-effort)."""
+    """task_id -> {domain, drive_link} from the source CSV (best-effort).
+
+    Self-contained: uses only csv.DictReader with case-insensitive header
+    resolution, so it has no dependency on run_augment/src.auditor and works
+    in isolation. Domain resolves across the several column names seen across
+    domains ("Domain", "Sub Domain", ...); drive link across its variants.
+    """
     if not csv_path or not os.path.exists(csv_path):
         return {}
     try:
-        import run_augment as ra
-        from src.auditor import build_header_map, get_field
-        f, rows = ra.load_rows(csv_path)
-        hm = build_header_map(f)
-        out = {}
-        for row in rows:
-            tid = (get_field(row, hm, "task_id") or "").strip()
-            if not tid:
-                continue
-            out[tid] = {
-                "domain": row.get("Domain", "") or row.get("domain", ""),
-                "drive_link": get_field(row, hm, "drive_link") or "",
-            }
+        with open(csv_path, newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            fn = reader.fieldnames or []
+            tid_col = _resolve_col(fn, "task_id", "task id", "taskid")
+            dom_col = _resolve_col(fn, "domain", "sub domain", "sub-domain", "subdomain")
+            link_col = _resolve_col(fn, "drive link", "drive_link", "google drive",
+                                    "drive url", "drive_url")
+            if not tid_col:
+                print("  (source-CSV join skipped: no task_id column found)")
+                return {}
+            out = {}
+            for row in reader:
+                tid = (row.get(tid_col) or "").strip()
+                if not tid:
+                    continue
+                out[tid] = {
+                    "domain": (row.get(dom_col) or "").strip() if dom_col else "",
+                    "drive_link": (row.get(link_col) or "").strip() if link_col else "",
+                }
         return out
     except Exception as e:
         print(f"  (source-CSV join skipped: {e})")
@@ -77,9 +102,14 @@ def load_source_fields(csv_path):
 # ---------------------------------------------------------------------------
 
 def load_inventory(aug_dir, src_fields):
-    clean, malformed = [], []
+    clean, malformed, unreadable = [], [], []
     for p in sorted(glob.glob(os.path.join(aug_dir, "*_augment.json"))):
-        rd = json.load(open(p))
+        try:
+            with open(p) as fh:
+                rd = json.load(fh)
+        except Exception as e:
+            unreadable.append((os.path.basename(p), str(e)))
+            continue
         tid = (rd.get("task_id") or "").strip()
         # Audit-coverage signals from the auditor (if the augment JSON carries
         # them). These may be nested under an "audit"/"audit_result" block or be
@@ -115,7 +145,7 @@ def load_inventory(aug_dir, src_fields):
             "file_leaks": n_file_leaks,            # input-file-scoped leaks (or None)
         }
         (clean if CLEAN.match(tid) else malformed).append(rec)
-    return clean, malformed
+    return clean, malformed, unreadable
 
 
 def audit_flag(rec) -> str:
@@ -162,16 +192,23 @@ def select_crux_split(pool, results_path, n_high, n_low, require_all_providers=T
     records = res.get("results", res if isinstance(res, list) else [])
     # provider run data per task, provider discovered from the trace
     runs = {}
+    turns_seen = False   # did the trace actually carry any turn counts?
     for x in records:
         t = x.get("task_id") or x.get("task")
         prov = x.get("provider") or x.get("model") or x.get("model_name")
         if not t or not prov:
             continue
         allf = x.get("output_files") or []
+        if "turns" in x:
+            turns_seen = True
         runs.setdefault(t, {})[prov] = dict(
             completed=x.get("completed", True),
             real=real_deliverables(allf),
             turns=x.get("turns", 0))
+    if not turns_seen:
+        print("  !  crux-split WARNING: the results trace carries no 'turns' field; "
+              "the LOW tier's min-turns ranking is meaningless (all zeros). "
+              "LOW-tier order is effectively arbitrary — verify the trace schema.")
 
     cand = []
     for r in pool:
@@ -227,19 +264,37 @@ def main():
     args = ap.parse_args()
 
     src_fields = load_source_fields(args.csv)
-    clean, malformed = load_inventory(args.aug_dir, src_fields)
+    clean, malformed, unreadable = load_inventory(args.aug_dir, src_fields)
 
     scoreable = [r for r in clean if r["scoreable"]]
     gradeable = [r for r in scoreable if r["verdict"] in GRADEABLE_VERDICTS]
-    print(f"JSON files            : {len(clean)+len(malformed)}")
+    print(f"JSON files            : {len(clean)+len(malformed)+len(unreadable)}")
     print(f"  clean task_ids      : {len(clean)}")
     print(f"  MALFORMED (ignored) : {len(malformed)}")
+    print(f"  UNREADABLE (ignored): {len(unreadable)}")
     print(f"  scoreable (clean)   : {len(scoreable)}")
     print(f"  gradeable           : {len(gradeable)}")
+
+    # Full verdict distribution across ALL clean tasks — makes visible what is
+    # being excluded and why (a task can be scoreable but not gradeable, e.g.
+    # UNGRADEABLE), so "were any SOUND tasks dropped?" is answerable at a glance.
+    vdist = {}
+    for r in clean:
+        v = r["verdict"] or "(missing)"
+        vdist[v] = vdist.get(v, 0) + 1
+    if vdist:
+        print("  verdict distribution (all clean):")
+        for v, n in sorted(vdist.items(), key=lambda kv: -kv[1]):
+            mark = " [gradeable]" if v in GRADEABLE_VERDICTS else ""
+            print(f"      {n:3d}  {v}{mark}")
     if malformed:
         print("\nMalformed IDs to investigate:")
         for r in malformed:
             print(f"  {r['task_id']}")
+    if unreadable:
+        print("\nUnreadable augment files to investigate:")
+        for name, err in unreadable:
+            print(f"  {name}: {err}")
 
     # pool
     pool = gradeable if (args.quality or args.strategy == "crux-split") else scoreable

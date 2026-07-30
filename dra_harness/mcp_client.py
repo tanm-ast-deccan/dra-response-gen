@@ -53,7 +53,7 @@ class MCPToolClient:
         """
         Args:
             staging_dir: working directory for tool execution
-                         (set as INDRAYUDH_STAGING_DIR env var)
+                         (set as DRA_AGENT_WORKDIR env var)
             server_script: path to exec_server.py (auto-detected if None)
         """
         self.staging_dir = os.path.abspath(staging_dir)
@@ -83,7 +83,7 @@ class MCPToolClient:
             )
 
         # Set staging dir so the server knows where files are
-        os.environ["INDRAYUDH_STAGING_DIR"] = self.staging_dir
+        os.environ["DRA_AGENT_WORKDIR"] = self.staging_dir
 
         logger.info(
             "Starting MCP exec server: %s (staging: %s)",
@@ -97,7 +97,7 @@ class MCPToolClient:
                 python_cmd=sys.executable,
                 env={
                     **os.environ,
-                    "INDRAYUDH_STAGING_DIR": self.staging_dir,
+                    "DRA_AGENT_WORKDIR": self.staging_dir,
                 },
             )
         )

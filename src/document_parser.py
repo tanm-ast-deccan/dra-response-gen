@@ -29,6 +29,11 @@ def read_document(file_path: str) -> str:
 
     extension = path.suffix.lower()
 
+    # Some Drive inputs arrive with NO extension (e.g. "executive_performance_deck").
+    # Sniff the container so a real pptx/xlsx/docx/pdf is not silently dropped.
+    if not extension:
+        extension = _sniff_extension(path) or extension
+
     if extension == ".txt" or extension == ".md":
         return _read_txt(path)
     elif extension == ".pdf":
@@ -48,6 +53,48 @@ def read_document(file_path: str) -> str:
             f"File type '{extension}' is not supported. "
             f"Use .pdf, .docx, .xlsx, .xls, .csv, .txt, or .md"
         )
+
+def _sniff_extension(path: Path) -> str:
+    """Best-effort content sniff for files that arrive without an extension.
+    OOXML (docx/xlsx/pptx) and legacy Office are both ZIP/OLE; we peek inside
+    the zip to disambiguate. Returns a dotted extension ('.pptx') or ''."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(8)
+    except Exception:
+        return ""
+    if head.startswith(b"%PDF"):
+        return ".pdf"
+    if head[:2] == b"PK":  # zip container -> OOXML
+        try:
+            import zipfile
+            with zipfile.ZipFile(path) as z:
+                names = z.namelist()
+            if any(n.startswith("ppt/") for n in names):
+                return ".pptx"
+            if any(n.startswith("xl/") for n in names):
+                return ".xlsx"
+            if any(n.startswith("word/") for n in names):
+                return ".docx"
+        except Exception:
+            return ""
+    if head[:4] == b"\xd0\xcf\x11\xe0":  # legacy OLE (.xls/.doc) — treat as xls
+        return ".xls"
+    # Text-ish fallback: try to parse as JSON, else plain text.
+    try:
+        import json as _json
+        with open(path, "r", encoding="utf-8", errors="strict") as f:
+            _json.load(f)
+        return ".json"
+    except Exception:
+        pass
+    try:
+        with open(path, "r", encoding="utf-8", errors="strict") as f:
+            f.read(2048)
+        return ".txt"
+    except Exception:
+        return ""
+
 
 def _read_pptx(path):
     from pptx import Presentation

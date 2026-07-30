@@ -29,27 +29,30 @@ logger = logging.getLogger("dra.gdrive_raw_fetcher")
 MAX_CHARS_PER_FILE = 40_000
 
 
-def fetch_gdrive_folder_raw(folder_url: str) -> Tuple[str, List[str]]:
+def fetch_gdrive_folder_raw(folder_url: str) -> Tuple[str, List[str], List[str]]:
     """Download all files from a GDrive reference and return (combined_raw_text,
-    filenames) with full extraction and no summarization."""
+    filenames, skipped_filenames) with full extraction and no summarization.
+
+    skipped_filenames lists inputs that could NOT be read (unsupported type or
+    extraction error) so a silently-degraded golden is VISIBLE to the caller."""
     if not folder_url or not folder_url.strip():
-        return "", []
+        return "", [], []
 
     try:
         from src.file_resolver import FileResolver, parse_gdrive_reference
     except ImportError as e:
         logger.error("file_resolver not available: %s", e)
-        return "", []
+        return "", [], []
     try:
         from src.document_parser import read_document
     except ImportError as e:
         logger.error("document_parser not available: %s", e)
-        return "", []
+        return "", [], []
 
     gdrive_info = parse_gdrive_reference(folder_url)
     if gdrive_info is None or gdrive_info.get("type") not in ("folder", "file", "workspace_doc"):
         logger.warning("Not a usable GDrive reference: %s", folder_url)
-        return "", []
+        return "", [], []
 
     with tempfile.TemporaryDirectory(prefix="dra_audit_gdrive_") as staging_dir:
         resolver = FileResolver(staging_dir=staging_dir)
@@ -57,24 +60,28 @@ def fetch_gdrive_folder_raw(folder_url: str) -> Tuple[str, List[str]]:
             local_paths = resolver.resolve([folder_url])
         except Exception as e:
             logger.error("GDrive resolution failed for %s: %s", folder_url, e)
-            return "", []
+            return "", [], []
 
         if not local_paths:
-            return "", []
+            return "", [], []
 
         sections: List[str] = []
         names: List[str] = []
+        skipped: List[str] = []
         for local_path in local_paths:
             filename = Path(local_path).name
             try:
                 raw = read_document(local_path)
             except NotImplementedError:
                 logger.warning("Unsupported file type, skipping: %s", filename)
+                skipped.append(filename)
                 continue
             except Exception as e:
                 logger.error("Extraction failed for %s: %s", filename, e)
+                skipped.append(filename)
                 continue
             if not raw or not raw.strip():
+                skipped.append(filename)
                 continue
 
             if len(raw) > MAX_CHARS_PER_FILE:
@@ -89,5 +96,5 @@ def fetch_gdrive_folder_raw(folder_url: str) -> Tuple[str, List[str]]:
             names.append(filename)
 
     if not sections:
-        return "", []
-    return "\n\n".join(sections), names
+        return "", [], skipped
+    return "\n\n".join(sections), names, skipped

@@ -377,7 +377,9 @@ async def run_task(task, params, driver) -> RunResult:
         return _dry_run_result(task, params, started)
 
     # ── Set up staging directory ──────────────────────────────────
-    staging = task.output_dir or os.path.join(os.getcwd(), "staging", task.task_id)
+    staging = task.output_dir
+    if not staging:
+        raise RuntimeError(f"task {task.task_id} has no output_dir — pipeline.build_tasks must set it")
     os.makedirs(staging, exist_ok=True)
     _stage_input_files(task.file_paths, staging)
 

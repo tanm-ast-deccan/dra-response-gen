@@ -81,6 +81,7 @@ def write_augment_report(res: dict, out_path: str) -> str:
 <p>Audit verdict: <span class='pill {vcls}'>{verdict}</span>
 &nbsp; Crux size: <b>{len(crux)}</b> verifiers &nbsp; Model: <span class=mono>{_esc(res.get('model_used'))}</span></p>
 {"<p class='pill bad'>ERROR: "+_esc(res.get('error'))+"</p>" if res.get('error') else ""}
+{"<p class='pill warn'>&#9888; DEGRADED GOLDEN — these input files could not be read and were NOT used: "+", ".join("<span class=tag>"+_esc(s)+"</span>" for s in res.get('skipped_inputs',[]))+"</p>" if res.get('skipped_inputs') else ""}
 
 <h2>Crux anchors (from Sanity Check)</h2>
 <p><b>Lazy-AI / trap side:</b> {trap or '<i>none</i>'}<br>

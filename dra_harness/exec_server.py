@@ -1,46 +1,26 @@
 """
-exec_server.py — MCP server for agent execution tools.
+exec_server.py — MCP server that serves the DRA agent tools.
 
-Complements corpus_server.py (which serves files TO the agent) by
-providing the tools the agent uses to DO work:
-
-    python_execute  — run Python code in a subprocess
-    bash_execute    — run shell commands
-    write_file      — create output files
-    web_search      — DuckDuckGo search (no API key)
-    web_fetch       — fetch URL content
-    calculator      — safe arithmetic evaluation
-
-Architecture:
-    ┌──────────────────────────────────────────────────────────────┐
-    │  runner.py (MCP client)                                      │
-    │     │                                                        │
-    │     ├── corpus_server (port 9400) ← file access (existing)  │
-    │     │     list_documents / search / fetch                    │
-    │     │                                                        │
-    │     ├── exec_server (stdio or port 9402) ← THIS FILE        │
-    │     │     python_execute / bash_execute / write_file         │
-    │     │     web_search / web_fetch / calculator                │
-    │     │                                                        │
-    │     └── results_server (port 9401) ← post-run storage       │
-    └──────────────────────────────────────────────────────────────┘
+Single source of truth: this server does NOT define tools inline. It bridges
+every tool registered in tools.TOOL_REGISTRY into FastMCP, so the agent sees
+exactly the tools defined in tools.py — python_execute, bash_execute, read_file,
+write_file, list_directory, search_in_file, web_search, web_fetch, calculator —
+and any tool added to tools.py in future appears here automatically with no edit
+to this file.
 
 Transports:
-    stdio  — started as subprocess by runner.py (default, recommended)
+    stdio  — started as a subprocess by mcp_client.py (default)
     SSE    — standalone HTTP server for shared/remote use
 
 Usage:
-    # stdio (runner starts this automatically)
-    python exec_server.py
-
-    # stdio with custom staging dir
-    INDRAYUDH_STAGING_DIR=/tmp/eval python exec_server.py
-
-    # List available tools
-    python exec_server.py --list-tools
-
-    # SSE mode on custom port
+    python exec_server.py                      # stdio (mcp_client starts this)
+    python exec_server.py --list-tools         # print tools and exit
     python exec_server.py --transport sse --port 9402
+
+The agent working directory is DRA_AGENT_WORKDIR, set by mcp_client before
+launch. tools.py reads it per-call, so nothing here needs it directly — but we
+fail loud if it is unset when the server starts standalone, to avoid silently
+operating against the wrong directory.
 
 Dependencies:
     pip install fastmcp duckduckgo-search
@@ -50,336 +30,143 @@ from __future__ import annotations
 
 import os
 import sys
-import re
-import ast
-import json
-import subprocess
-import tempfile
 import logging
-import operator as op
 import argparse
-from typing import Optional
 
 from fastmcp import FastMCP
 
+# Import the single tool library. Support both package and script execution.
+try:
+    from . import tools
+except ImportError:
+    import tools
+
 logger = logging.getLogger("dra.exec_server")
 
-STAGING_DIR = os.environ.get("INDRAYUDH_STAGING_DIR", os.getcwd())
+
+# ── Fail loud if the agent workdir was not set (except for --list-tools) ──────
+# mcp_client sets DRA_AGENT_WORKDIR before launching. If it is unset here, the
+# tools would silently operate against cwd — the exact bug that made an agent
+# scan the whole host for its inputs. Refuse instead.
+def _require_workdir():
+    if not os.environ.get("DRA_AGENT_WORKDIR"):
+        raise RuntimeError(
+            "DRA_AGENT_WORKDIR not set. mcp_client must set it before launching "
+            "exec_server. Refusing to default to cwd."
+        )
+
 
 mcp = FastMCP(
     name="dra-exec-tools",
     instructions=(
-        "Execution tools for deep research analysis. Use python_execute "
-        "for calculations and data processing, bash_execute for shell "
-        "operations, web_search for external information, web_fetch to "
-        "read web pages, write_file for producing deliverables, and "
-        "calculator for quick arithmetic."
+        "Execution and file tools for deep research analysis. Use python_execute "
+        "for calculations and data processing, bash_execute for shell operations, "
+        "read_file / search_in_file / list_directory to inspect task files, "
+        "write_file to produce deliverables, web_search / web_fetch for external "
+        "information, and calculator for quick arithmetic."
     ),
 )
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  TOOLS
-# ═══════════════════════════════════════════════════════════════════════════
-
+# ── Explicit thin wrappers ────────────────────────────────────────────────────
+# One wrapper per registered tool. Each has a real, introspectable signature
+# (FastMCP/pydantic build the MCP schema from these type hints) and delegates to
+# tools.execute() so ALL logic, defaults, and error handling live in tools.py.
+# Parameter names/types/defaults mirror the @register_tool schemas in tools.py.
+# When you add a tool to tools.py, add a matching wrapper here (and the startup
+# consistency check below will remind you if you forget).
 
 @mcp.tool()
 def python_execute(code: str) -> str:
-    """Execute Python code and return stdout/stderr.
-
-    Use for calculations, data analysis, file processing, chart generation,
-    and creating output files. Libraries available: pandas, numpy, scipy,
-    openpyxl (xlsx), python-docx (docx), python-pptx (pptx), reportlab and
-    fpdf2 (pdf), matplotlib, pdfplumber (read pdf), json, csv, os. The working
-    directory contains the task input files. To create output files:
-      - xlsx: openpyxl or pandas.to_excel  → wb.save('output.xlsx')
-      - pdf:  reportlab.SimpleDocTemplate or fpdf2  → doc.build(...) / pdf.output(...)
-      - csv:  the csv module or pandas.to_csv('output.csv')
-      - txt/md/json: plain open('name.ext','w').write(...) / json.dump
-    Save every output to the current directory with a plain filename (do not
-    cd elsewhere). Print results to stdout to see them.
-    """
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".py", dir=STAGING_DIR, delete=False
-    ) as f:
-        f.write(code)
-        tmp_path = f.name
-
-    try:
-        result = subprocess.run(
-            [sys.executable, tmp_path],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            cwd=STAGING_DIR,
-        )
-        output = ""
-        if result.stdout:
-            output += result.stdout
-        if result.stderr:
-            output += f"\n[stderr]\n{result.stderr}"
-        return (output.strip() or "[no output]")[:15000]
-    except subprocess.TimeoutExpired:
-        return "[error] execution timed out (120s)"
-    except Exception as e:
-        return f"[error] {e}"
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+    return tools.execute("python_execute", {"code": code})
 
 
 @mcp.tool()
 def bash_execute(command: str) -> str:
-    """Execute a shell command and return stdout/stderr.
+    return tools.execute("bash_execute", {"command": command})
 
-    Use for: file operations (mv, cp, ls), installing packages
-    (pip install), running scripts, or any system command.
-    The working directory is the task staging folder.
-    """
-    try:
-        result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=120,
-            cwd=STAGING_DIR,
-        )
-        output = ""
-        if result.stdout:
-            output += result.stdout
-        if result.stderr:
-            output += f"\n[stderr]\n{result.stderr}"
-        return (output.strip() or "[no output]")[:15000]
-    except subprocess.TimeoutExpired:
-        return "[error] execution timed out (120s)"
-    except Exception as e:
-        return f"[error] {e}"
+
+@mcp.tool()
+def read_file(path: str) -> str:
+    return tools.execute("read_file", {"path": path})
 
 
 @mcp.tool()
 def write_file(path: str, content: str) -> str:
-    """Write text content to a file in the staging directory.
-
-    Use for: creating reports (.md, .txt), saving analysis results
-    (.csv, .json), generating code (.py), or any text output.
-    Path is relative to the staging directory.
-    """
-    if not os.path.isabs(path):
-        path = os.path.join(STAGING_DIR, path)
-
-    try:
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
-        return f"File written: {path} ({os.path.getsize(path):,} bytes)"
-    except Exception as e:
-        return f"[error] writing {path}: {e}"
+    return tools.execute("write_file", {"path": path, "content": content})
 
 
-def _serper_search(query: str, max_results: int) -> list[dict]:
-    """Google results via Serper. Returns [] if no key or on failure."""
-    import os as _os
-    key = _os.environ.get("SERPER_API_KEY")
-    if not key:
-        return []
-    import time
-    import requests
-    for attempt in range(2):
-        try:
-            resp = requests.post(
-                "https://google.serper.dev/search",
-                headers={"X-API-KEY": key, "Content-Type": "application/json"},
-                json={"q": query, "num": max_results},
-                timeout=20,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            out = []
-            ab = data.get("answerBox")
-            if ab:
-                snip = ab.get("answer") or ab.get("snippet") or ""
-                if snip:
-                    out.append({"title": ab.get("title", "Answer box"),
-                                "href": ab.get("link", ""), "body": snip})
-            for item in data.get("organic", [])[:max_results]:
-                out.append({"title": item.get("title", ""),
-                            "href": item.get("link", ""),
-                            "body": item.get("snippet", "")})
-            return out
-        except Exception as e:
-            if attempt == 0:
-                time.sleep(1.5)
-                continue
-            logger.warning("serper search failed: %s", e)
-            return []
-    return []
+@mcp.tool()
+def list_directory(path: str = ".") -> str:
+    return tools.execute("list_directory", {"path": path})
 
 
-def _ddg_search(query: str, max_results: int) -> list[dict]:
-    try:
-        from duckduckgo_search import DDGS
-    except ImportError:
-        return []
-    try:
-        with DDGS() as ddgs:
-            return list(ddgs.text(query, max_results=max_results))
-    except Exception as e:
-        logger.warning("ddg search failed: %s", e)
-        return []
+@mcp.tool()
+def search_in_file(path: str, query: str, context_lines: int = 3) -> str:
+    return tools.execute("search_in_file",
+                         {"path": path, "query": query, "context_lines": context_lines})
 
 
 @mcp.tool()
 def web_search(query: str, max_results: int = 5) -> str:
-    """Search the web and return top results (titles, URLs, snippets).
-
-    Uses Google (via Serper) when SERPER_API_KEY is set — far better on
-    institutional/government/data sources — and falls back to DuckDuckGo
-    otherwise or if Serper returns nothing. Use for finding current data,
-    verifying facts, or retrieving external information not in the files.
-    """
-    backend = "serper" if os.environ.get("SERPER_API_KEY") else "duckduckgo"
-    results = _serper_search(query, max_results) if backend == "serper" else []
-    if not results:
-        ddg = _ddg_search(query, max_results)
-        if ddg:
-            backend = "serper->ddg" if backend == "serper" else "duckduckgo"
-            results = ddg
-
-    if not results:
-        return f"[web_search backend={backend}] No results for '{query}'"
-
-    parts = [f"[web_search backend={backend}] {len(results)} result(s) for '{query}':"]
-    for i, r in enumerate(results, 1):
-        parts.append(
-            f"[{i}] {r.get('title', '')}\n"
-            f"    URL: {r.get('href', '')}\n"
-            f"    {r.get('body', '')}"
-        )
-    return "\n\n".join(parts)
+    return tools.execute("web_search", {"query": query, "max_results": max_results})
 
 
 @mcp.tool()
 def web_fetch(url: str) -> str:
-    """Fetch the text content of a web page.
-
-    Use for: reading full articles/pages found via web_search,
-    retrieving data from APIs, downloading publicly available
-    documents. Returns content truncated to 30,000 characters.
-    HTML tags are stripped for readability.
-    """
-    import urllib.request
-    import urllib.error
-
-    try:
-        req = urllib.request.Request(
-            url, headers={"User-Agent": "Mozilla/5.0"}
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            content_type = resp.headers.get("Content-Type", "")
-            raw = resp.read(500_000)
-
-            encoding = "utf-8"
-            if "charset=" in content_type:
-                encoding = (
-                    content_type.split("charset=")[-1].split(";")[0].strip()
-                )
-            text = raw.decode(encoding, errors="replace")
-
-            if "html" in content_type.lower():
-                text = re.sub(
-                    r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL
-                )
-                text = re.sub(
-                    r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL
-                )
-                text = re.sub(r"<[^>]+>", " ", text)
-                text = re.sub(r"\s+", " ", text).strip()
-
-            return text[:30000] or "[empty response]"
-
-    except urllib.error.HTTPError as e:
-        return f"[error] HTTP {e.code}: {e.reason}"
-    except urllib.error.URLError as e:
-        return f"[error] URL error: {e.reason}"
-    except Exception as e:
-        return f"[error] fetching {url}: {e}"
+    return tools.execute("web_fetch", {"url": url})
 
 
 @mcp.tool()
 def calculator(expression: str) -> str:
-    """Evaluate a basic arithmetic expression and return the result.
-
-    Supports: +, -, *, /, **, //, %. Parentheses for grouping.
-    Example: '2 * (3 + 4) / 7' → '2.0'
-    """
-    ops = {
-        ast.Add: op.add,
-        ast.Sub: op.sub,
-        ast.Mult: op.mul,
-        ast.Div: op.truediv,
-        ast.Pow: op.pow,
-        ast.Mod: op.mod,
-        ast.USub: op.neg,
-        ast.UAdd: op.pos,
-        ast.FloorDiv: op.floordiv,
-    }
-
-    def _eval(node):
-        if isinstance(node, ast.Constant) and isinstance(
-            node.value, (int, float)
-        ):
-            return node.value
-        if isinstance(node, ast.BinOp) and type(node.op) in ops:
-            return ops[type(node.op)](_eval(node.left), _eval(node.right))
-        if isinstance(node, ast.UnaryOp) and type(node.op) in ops:
-            return ops[type(node.op)](_eval(node.operand))
-        raise ValueError("unsupported expression")
-
-    try:
-        tree = ast.parse(expression, mode="eval")
-        return str(_eval(tree.body))
-    except Exception as e:
-        return f"[error] {e}"
+    return tools.execute("calculator", {"expression": expression})
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  ENTRY POINT
-# ═══════════════════════════════════════════════════════════════════════════
+def _check_registry_parity():
+    """Fail loud at startup if tools.py has tools this server doesn't expose (or
+    vice-versa) — so adding a tool to tools.py without a wrapper here is caught
+    immediately rather than silently hidden from the agent."""
+    import asyncio
+    _listed = mcp.list_tools()
+    if asyncio.iscoroutine(_listed):
+        _listed = asyncio.run(_listed)
+    exposed = {t.name for t in _listed}
+    registered = set(tools.TOOL_REGISTRY.keys())
+    missing = registered - exposed
+    extra = exposed - registered
+    if missing:
+        raise RuntimeError(
+            f"exec_server is missing wrappers for tools in tools.py: {sorted(missing)}. "
+            f"Add an @mcp.tool() wrapper for each."
+        )
+    if extra:
+        logger.warning("exec_server exposes tools not in tools.py: %s", sorted(extra))
+    logger.info("Tool parity OK: %d tools exposed, matching tools.TOOL_REGISTRY",
+                len(exposed))
+
+
+_check_registry_parity()
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="MCP Execution Server — agent tools for DRA"
-    )
-    parser.add_argument(
-        "--transport",
-        choices=["stdio", "sse"],
-        default="stdio",
-        help="MCP transport (default: stdio)",
-    )
-    parser.add_argument(
-        "--port", type=int, default=9402, help="Port for SSE mode"
-    )
-    parser.add_argument(
-        "--list-tools", action="store_true", help="Print tools and exit"
-    )
+    parser = argparse.ArgumentParser(description="MCP Execution Server — DRA agent tools")
+    parser.add_argument("--transport", choices=["stdio", "sse"], default="stdio")
+    parser.add_argument("--port", type=int, default=9402)
+    parser.add_argument("--list-tools", action="store_true")
     parser.add_argument("--verbose", "-v", action="store_true")
-
     args = parser.parse_args()
 
     if args.verbose:
-        logging.basicConfig(
-            level=logging.DEBUG,
-            format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-            datefmt="%H:%M:%S",
-        )
+        logging.basicConfig(level=logging.DEBUG,
+                            format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+                            datefmt="%H:%M:%S")
 
     if args.list_tools:
-        for tool in mcp._tool_manager.tools.values():
-            print(f"  {tool.name}: {tool.description[:80]}")
+        for name, tool in sorted(tools.TOOL_REGISTRY.items()):
+            print(f"  {name}: {tool.description[:80]}")
         sys.exit(0)
+
+    _require_workdir()
 
     if args.transport == "sse":
         mcp.run(transport="sse", port=args.port)

@@ -66,9 +66,12 @@ class AugmentResult:
     crux_shapley_weights: Dict[str, float] = field(default_factory=dict)
     expected_values: Dict[str, dict] = field(default_factory=dict)  # frozen scoring targets
     crux_dropped_no_expected: List[str] = field(default_factory=list)  # reachable but no target
+    scoreable: bool = True                       # False if any crux verifier is judgment_flagged
+    not_scoreable_reason: str = ""               # human-readable why-excluded
 
     # provenance
     model_used: str = ""
+    skipped_inputs: List[str] = field(default_factory=list)  # inputs that could not be read
     error: str = ""
     notes: str = ""
 
@@ -135,6 +138,7 @@ def augment_task(
     input_files_names: Optional[List[str]] = None,
     model_name: str = DEFAULT_JUDGE_MODEL,
     audit: Optional[AuditResult] = None,
+    skipped_inputs: Optional[List[str]] = None,
 ) -> AugmentResult:
     task_id = get_field(row, header_map, "task_id") or "(no id)"
     prompt_text = get_field(row, header_map, "prompt")
@@ -142,6 +146,7 @@ def augment_task(
     verifiers_text = get_field(row, header_map, "verifiers")
 
     res = AugmentResult(task_id=task_id, model_used=model_name)
+    res.skipped_inputs = list(skipped_inputs or [])
 
     # --- Stage 0/1: audit (reuse existing auditor) + apply corrections ---
     if audit is None:
@@ -233,5 +238,24 @@ def augment_task(
     # --- Stage 5: crux-only Shapley ---
     res.crux_shapley_weights = crux_shapley(
         all_vs, dag, res.base_weights, res.crux_ids)
+
+    # --- Scoreability gate: a crux verifier tied to an unresolved JUDGMENT_REQUIRED
+    # question (source_of_verification == "judgment_flagged") means the task's
+    # answer is contested and must NOT be scored until an SME resolves it (handoff
+    # §3). Surface it as a first-class column so list_clean_tasks can filter
+    # automatically instead of relying on a hand-maintained --exclude-tasks list.
+    flagged = [vid for vid in res.crux_ids
+               if (res.expected_values.get(vid, {}) or {}).get(
+                   "source_of_verification") == "judgment_flagged"]
+    if flagged:
+        res.scoreable = False
+        res.not_scoreable_reason = ("crux verifier(s) judgment_flagged: "
+                                    + ", ".join(sorted(flagged)))
+    elif res.error:
+        res.scoreable = False
+        res.not_scoreable_reason = f"augment error: {res.error}"
+    elif not res.crux_ids:
+        res.scoreable = False
+        res.not_scoreable_reason = "no crux verifiers selected"
 
     return res
