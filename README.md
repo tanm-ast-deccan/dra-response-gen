@@ -1,232 +1,235 @@
-# DRA Harness
+# DRA Response-Gen
 
-A minimal MCP-based Deep Research Agent harness for benchmarking LLMs on long-horizon, file-grounded research tasks. Built for apples-to-apples comparison with [APEX-Agents](https://arxiv.org/abs/2601.14242).
+Two pipelines for building and evaluating a Deep Research Agent benchmark:
 
-## What it does
+- **`dra_harness`** — an MCP-based agent harness that runs LLMs on long-horizon,
+  file-grounded research tasks and captures full trajectories. (Deep dive:
+  [DATAFLOW.md](DATAFLOW.md).)
+- **The augment pipeline** (`run_augment.py` + `src/`) — turns SME prompt
+  packages into scored-ready golden packages: golden deliverable, verifier DAG,
+  crux set, and crux-only Shapley weights. (Deep dive:
+  [README_auditor.md](README_auditor.md).)
 
-Given a CSV of benchmark tasks (prompt + Google Drive link to input files), the harness:
+The two connect through the benchmark: the harness generates model responses; the
+augment pipeline builds the golden packages those responses are scored against.
 
-1. Downloads task files from Google Drive
-2. Spins up an MCP tool server per run (Python, bash, web search, file write, calculator)
-3. Runs the model in a ReAct loop — model discovers files, reads them via tools, runs calculations, searches the web, and writes deliverables
-4. Captures full turn-by-turn trajectories (tool calls, results, tokens, cost, timing)
-5. Saves structured JSON results for downstream scoring
+---
 
-No guardrails. No hand-holding. No stagnation detection. The model succeeds or fails on its own — same as APEX.
+## 1. `dra_harness` — the agent harness
 
-## Quick start
+Given a CSV of tasks (prompt + Google Drive link to input files), the harness:
+
+1. Optionally downloads task files from Google Drive.
+2. Spins up an MCP tool server per run (Python, bash, file read/write, web
+   search, web fetch, calculator).
+3. Runs the model in a ReAct loop — it discovers files, reads them via tools,
+   runs calculations, searches the web, and writes deliverables.
+4. Captures the full turn-by-turn trajectory (tool calls, results, tokens, cost,
+   timing).
+5. Saves structured JSON for downstream scoring.
+
+Minimal by design: no guardrails, no stagnation detection, minimal system prompt.
+
+### Quick start
 
 ```bash
-# Setup
 conda activate dra
 pip install -r requirements.txt
 
-# Add API keys to .env
+# API keys in .env
 echo "OPENROUTER_API_KEY=sk-or-..." >> .env
 echo "SERPER_API_KEY=..."           >> .env   # optional, Google search
 
-# Run a single task
-python -m dra_harness \
-    --csv prompt_data.csv \
-    --providers hunyuan \
-    --passes 1 \
-    --task-ids tsk_6177770042 \
-    --resolve-files \
-    --live \
-    --verbose
+# Single task
+python -m dra_harness --csv prompt_data.csv \
+    --providers hunyuan --passes 1 --task-ids tsk_6177770042 \
+    --resolve-files --live --verbose
 
-# Run all tasks
-python -m dra_harness \
-    --csv prompt_data.csv \
-    --providers hunyuan \
-    --passes 1 \
-    --resolve-files \
-    --live \
-    --verbose
+# Whole CSV
+python -m dra_harness --csv prompt_data.csv \
+    --providers hunyuan --passes 1 --resolve-files --live
 ```
 
-## Architecture
+Entry points are equivalent: `python -m dra_harness` and
+`python -m dra_harness.cli`.
+
+### Architecture
 
 ```
 prompt_data.csv
       │
       ▼
-┌─────────────┐     ┌──────────────────┐
+┌──────────────┐     ┌──────────────────┐
 │  csv_loader  │────▶│  file_resolver   │──── Google Drive API
-│  (parse CSV) │     │  (download files)│
-└──────┬──────┘     └──────────────────┘
+│  (parse CSV) │     │ (download files) │     (only with --resolve-files)
+└──────┬───────┘     └──────────────────┘
        │
        ▼
-┌─────────────┐     ┌──────────────────┐
-│   pipeline   │────▶│     runner       │──── OpenRouter / CometAPI
-│  (fan out    │     │  (ReAct loop +   │
+┌──────────────┐     ┌──────────────────┐
+│   pipeline   │────▶│      runner      │──── OpenRouter / CometAPI
+│  (fan out    │     │  (ReAct loop +   │      (provider.py driver)
 │   tasks)     │     │   trajectory)    │
-└──────┬──────┘     └───────┬──────────┘
-       │                    │
-       │              ┌─────▼──────────┐
+└──────┬───────┘     └────────┬─────────┘
+       │                      │
+       │              ┌───────▼────────┐
        │              │   mcp_client   │──── stdio subprocess
-       │              └─────┬──────────┘
-       │              ┌─────▼──────────┐
-       │              │  exec_server   │  6 MCP tools:
-       │              │  (fastmcp)     │  • python_execute
-       │              └────────────────┘  • bash_execute
-       │                                  • web_search (Serper/DDG)
-       ▼                                  • web_fetch
-┌─────────────┐                           • write_file
-│   results/   │                           • calculator
-│  (JSON out)  │
-└─────────────┘
+       │              └───────┬────────┘
+       │              ┌───────▼────────┐
+       │              │   exec_server  │  9 MCP tools:
+       │              │   (FastMCP)    │  • python_execute • bash_execute
+       │              └────────────────┘  • read_file • write_file
+       │                                   • list_directory • search_in_file
+       ▼                                   • web_search • web_fetch • calculator
+┌──────────────┐
+│   runs_dir/  │  run_<ts>_<provider>/staging/<task>/runs/<provider>__pN/
+│  (JSON out)  │  results: run_<ts>_<providers>_<N>tasks.json
+└──────────────┘
 ```
 
-## MCP Tools
+### MCP tools
+
+`exec_server.py` (FastMCP) exposes nine tools to the model:
 
 | Tool | Description |
-|------|-------------|
-| `python_execute` | Run Python code. Libraries: pandas, numpy, openpyxl, python-docx, pdfplumber, matplotlib |
-| `bash_execute` | Run shell commands. Working directory is the task staging folder |
-| `write_file` | Write text files (md, txt, csv, json) to the staging directory |
-| `web_search` | Google results via Serper (if `SERPER_API_KEY` set), else DuckDuckGo fallback |
-| `web_fetch` | Fetch and extract text from a URL (HTML tags stripped, 30K char limit) |
+|---|---|
+| `python_execute` | Run Python (pandas, numpy, openpyxl, python-docx, pdfplumber, matplotlib) |
+| `bash_execute` | Run shell commands in the run's staging folder |
+| `read_file` | Read a file from the staging dir |
+| `write_file` | Write a file (deliverables) to the staging dir |
+| `list_directory` | List a directory |
+| `search_in_file` | Grep-with-context inside a file |
+| `web_search` | Serper (if `SERPER_API_KEY` set) else DuckDuckGo fallback |
+| `web_fetch` | Fetch and extract text from a URL |
 | `calculator` | Evaluate arithmetic expressions |
 
-## Supported Models
+### Supported models
 
-All models route through OpenRouter except Doubao (CometAPI). Adding a new model = one entry in `provider.py`:
+Registered in `provider.py` (`MODEL_REGISTRY`). All route through OpenRouter
+except Doubao (CometAPI). Adding a model is one registry entry.
 
-| Provider | Model | Slug | Notes |
-|----------|-------|------|-------|
-| `hunyuan` | Tencent Hunyuan 3 | `tencent/hy3` | Free until Jul 21, 2026 |
-| `qwen` | Qwen 3.6 27B | `qwen/qwen3.6-27b` | Needs temp=0.3 for agentic tasks |
-| `claude` | Claude Sonnet 4.6 | `anthropic/claude-sonnet-4-6` | |
-| `openai` | OpenAI o3 | `openai/o3` | |
-| `gemini` | Gemini 2.5 Pro | `google/gemini-2.5-pro` | |
-| `kimi` | Kimi K2 | `moonshotai/kimi-k2` | |
-| `deepseek` | DeepSeek R1 | `deepseek/deepseek-r1` | |
-| `grok` | Grok 3 | `x-ai/grok-3` | |
-| `doubao` | Doubao 2.1 Pro | `doubao-seed-2-1-pro-260628` | Via CometAPI, needs `COMETAPI_KEY` |
+| Provider | Slug | Notes |
+|---|---|---|
+| `claude` | `anthropic/claude-sonnet-4-6` | |
+| `openai` | `openai/gpt-5` | |
+| `gemini` | `google/gemini-3-flash` | |
+| `qwen` | `qwen/qwen3.6-27b` | needs `temperature=0.3` for agentic tasks (default override) |
+| `hunyuan` | `tencent/hy3` | |
+| `doubao` | `doubao-seed-2-1-pro-260628` | via CometAPI, needs `COMETAPI_KEY` |
 
-## Configuration
+Default providers when `--providers` is omitted: `claude openai gemini qwen`.
 
-`config.py` is the single source of truth. CLI only overrides when explicitly passed.
+### Configuration
+
+`config.py` is the single source of truth; the CLI only overrides what is
+explicitly passed. Key defaults (`GenParams` / `PipelineConfig`):
 
 ```python
-# Key defaults
-temperature      = 1.0      # provider default (Qwen needs 0.3)
-max_tokens       = 16000    # per-turn output limit
-reasoning_effort = "medium" # "", "low", "medium", "high"
-max_turns        = 150      # max tool-calling rounds per task
-tool_choice      = "auto"   # model decides when to use tools and when to stop
-max_cost_usd     = 5.0      # budget guard per task
-request_timeout  = 1800     # 30 min per API call
-code_exec_timeout = 300     # 5 min per code execution
+temperature       = 1.0       # Qwen overridden to 0.3 via agent_overrides
+max_tokens        = 32000     # per-turn output limit
+reasoning_effort  = "high"
+max_turns         = 250       # tool-calling rounds per task
+enabled_tools     = ["all"]   # all MCP tools
+tool_choice       = "auto"
+file_output       = True      # honor detected output_formats
+max_cost_usd      = 50.0      # budget guard per run
+request_timeout   = 1800      # 30 min per API call
+code_exec_timeout = 300       # 5 min per code execution
+max_concurrent    = 4         # runs in flight
 ```
 
-Per-model overrides via `agent_overrides`:
-```python
-agent_overrides = {
-    "qwen": {"temperature": 0.3},
-}
-```
+Per-provider overrides via `agent_overrides` (default: `{"qwen": {"temperature": 0.3}}`)
+or on the CLI via `--model provider=slug`.
 
-## CLI Reference
+### CLI reference
 
 ```bash
 python -m dra_harness \
-    --csv prompt_data.csv        # required: task CSV
-    --providers hunyuan qwen     # which models to run
-    --passes 3                   # runs per model (Pass@k)
-    --task-ids tsk_123,tsk_456   # filter to specific tasks
-    --resolve-files              # download GDrive files before running
-    --live                       # make real API calls (default is dry-run)
-    --verbose                    # debug logging
-    --temperature 0.3            # override config.py
-    --max-turns 250              # override config.py
-    --max-cost 50.0              # override config.py
-    --model qwen=qwen/qwen3-235b-a22b  # override model slug
-    --output-dir ./results       # where to write JSON
-    --no-save                    # skip writing results to disk
+    --csv prompt_data.csv          # required
+    --providers claude qwen        # which models (default: claude openai gemini qwen)
+    --passes 3                     # runs per model (Pass@k)
+    --max-rows 3                   # limit rows loaded
+    --task-ids tsk_123,tsk_456     # filter to specific tasks
+    --live                         # real API calls (default is dry-run)
+    --web-search                   # enable OpenRouter web search
+    --tools calculator             # limit local tools (default: all)
+    --no-file-output               # skip file generation
+    --resolve-files                # download GDrive files first
+    --temperature 0.3              # override config.py
+    --max-turns 250                # override config.py
+    --max-cost 50.0                # override config.py
+    --max-tokens 32000             # override config.py
+    --timeout 1800                 # override request timeout
+    --concurrency 4                # runs in flight
+    --model qwen=qwen/qwen3-235b-a22b   # per-provider slug override
+    --output-dir ./results         # where to write JSON
+    --staging-dir ./staging        # staging root
+    --no-save                      # do not write results JSON
+    --verbose                      # debug logging
 ```
 
-## Staging Layout
+### Run directory layout
+
+`run_batch` creates one timestamped run root and stages under it:
 
 ```
-staging/
-└── tsk_6177770042/
-    └── runs/
-        ├── hunyuan__p1/                  # per-run workspace
-        │   ├── Finance_Assumptions.xlsx  → symlink to shared download
-        │   ├── Supplier_Cost_Data.xlsx   → symlink
-        │   ├── Procurement_Report.pdf    → symlink
-        │   └── Board_Memo.md            ← model-generated output
-        ├── hunyuan__p2/
-        └── qwen__p1/
+runs_dir/
+└── run_<timestamp>_<provider>/
+    └── staging/
+        └── tsk_<id>/
+            └── runs/
+                ├── <provider>__p1/     # per-run workspace
+                │   ├── <input files>   → symlinks to shared download
+                │   └── <model outputs> ← generated deliverables
+                └── <provider>__p2/
 ```
 
-Input files are downloaded once; each run gets symlinks. Model-generated outputs stay in the run directory.
+Results JSON: `run_<timestamp>_<providers>_<N>tasks.json` in the output dir,
+including the full per-turn trajectory for every run.
 
-## Output Format
+---
 
-Results JSON includes full trajectory with per-turn detail:
+## 2. The augment pipeline — golden packages
 
-```json
-{
-  "task_id": "tsk_6177770042",
-  "run_id": "tsk_6177770042__hunyuan__p1",
-  "provider": "hunyuan",
-  "model": "tencent/hy3",
-  "turns": 13,
-  "total_cost_usd": 0.019,
-  "total_duration_sec": 482.1,
-  "completed": true,
-  "forced_stop": false,
-  "response_text": "...",
-  "trajectory": [
-    {
-      "turn": 1,
-      "assistant_text": "I'll start by exploring the working directory...",
-      "tool_calls": [{"name": "bash_execute", "arguments": {"command": "ls -la"}}],
-      "tool_results": [{"name": "bash_execute", "result": "..."}],
-      "input_tokens": 1305,
-      "output_tokens": 52,
-      "cost_usd": 0.0002
-    }
-  ]
-}
-```
-
-## APEX-Agents Parity
-
-| Dimension | APEX-Agents | This harness |
-|-----------|------------|--------------|
-| Agent loop | ReAct, 250 max | ReAct, 150 max (configurable) |
-| Tools | MCP (filesystem, shell, browser) | MCP (python, bash, web, fetch, write, calc) |
-| File discovery | Via tools only | Via tools only |
-| System prompt | Minimal | Minimal |
-| Error recovery | None | None |
-| Guardrails | None | None |
-| Sandbox | Docker per task | Per-run staging dir |
-| Multi-run | Pass@8 | Pass@k (configurable) |
-
-## Environment Variables
+`run_augment.py` (over `src/`) turns each SME prompt package into a golden
+package used to score responses. Per task: audit → apply corrections → one Opus
+augment call (golden deliverable + DAG + Sanity-Check anchors + verifiers) →
+build the verifier set + weights → deterministic crux selection → crux-only
+Shapley weights. It writes `{task_id}_augment.json` (the canonical per-task
+record), per-task HTML, and an `augmented_prompt_packages.csv`.
 
 ```bash
-# Required
+python run_augment.py --csv prompt_data.csv --out-dir output/augmented
+python run_augment.py --csv prompt_data.csv --row 1
+python run_augment.py --csv prompt_data.csv --from 1 --to 20 --no-html
+```
+
+Three co-equal scoring metrics per response: `crux_cleared` (AND over the crux
+set), `crux_verifier_pass_ratio` (k/n), and `crux_shapley_score`. See
+[README_auditor.md](README_auditor.md) for the full flow, files, and outputs.
+
+---
+
+## Environment variables
+
+```bash
+# Required for live harness runs
 OPENROUTER_API_KEY=sk-or-...
 
 # Optional
-SERPER_API_KEY=...              # Google search (2,500 free queries)
-COMETAPI_KEY=...                # For Doubao model via CometAPI
-GOOGLE_APPLICATION_CREDENTIALS=./gcp_key.json  # GDrive file downloads
+SERPER_API_KEY=...                              # Google search (else DuckDuckGo)
+COMETAPI_KEY=...                                # Doubao via CometAPI
+GOOGLE_APPLICATION_CREDENTIALS=./gcp_key.json   # GDrive file downloads
 ```
 
 ## Requirements
 
 - Python 3.11+
 - `fastmcp >= 3.4.4`
-- `openai` (for OpenRouter API compatibility)
-- `pandas`, `openpyxl`, `pdfplumber`, `python-docx` (for agent tools)
+- `openai` (OpenRouter API compatibility)
+- `pandas`, `openpyxl`, `pdfplumber`, `python-docx` (agent tools)
 - `duckduckgo-search` (fallback web search)
 - `google-api-python-client`, `google-auth-httplib2` (GDrive downloads)
+- augment pipeline also uses `PyMuPDF`, `python-dotenv`
 
 ## License
 
