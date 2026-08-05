@@ -44,14 +44,23 @@ def ancestors(dag: Dict[str, List[str]]) -> Dict[str, Set[str]]:
     """Transitive ancestors (dependencies) of every node."""
     anc: Dict[str, Set[str]] = {n: set() for n in dag}
 
+    # `in_progress` is a cycle guard. Without it a cyclic dag recurses until the
+    # stack dies, and _remap_dag upstream strips self-loops but not longer cycles,
+    # so a two-node cycle in the asserted dag_edges took down select_crux.
+    in_progress: Set[str] = set()
+
     def rec(n: str) -> Set[str]:
         if anc[n]:
             return anc[n]
+        if n in in_progress:
+            return set()
+        in_progress.add(n)
         s: Set[str] = set()
         for p in dag.get(n, []):
             if p in dag:
                 s.add(p)
                 s |= rec(p)
+        in_progress.discard(n)
         anc[n] = s
         return s
 
@@ -113,6 +122,7 @@ def select_crux(
     trap_anchor_ids: Optional[Iterable[str]] = None,
     expert_anchor_ids: Optional[Iterable[str]] = None,
     expected_value_ids: Optional[Iterable[str]] = None,
+    final_answer_ids: Optional[Iterable[str]] = None,
 ) -> CruxSelection:
     """Deterministic crux selection.
 
@@ -123,6 +133,9 @@ def select_crux(
         we fall back to structural heuristics:
           trap side   -> verifiers with type == 'TRAP'
           expert side -> the max-depth analytical node(s) + any decision verifier
+    final_answer_ids: verifiers that test the FINAL ANSWER — mapped to a terminal
+        step of the trajectory, or asserting a decision. Together with the anchors
+        these are the crux; there is no graph expansion.
     expected_value_ids: verifiers that have a FROZEN EXPECTED VALUE. When given,
         the crux is filtered to ONLY these (the expected-value filter): a verifier
         with no frozen target cannot be matched by the scorer, so it would sit
@@ -157,10 +170,34 @@ def select_crux(
         expert = [i for i in expert_anchor_ids if i in by_id]
 
     anchors = set(trap) | set(expert)
-    crux = connected_to_anchors(dag, anchors)
 
-    # reachable set in original order
-    reachable_ids = [i for i in ids if i in crux]
+    # --- DIRECT relation only, no reachability expansion --------------------
+    # THE RULE: a verifier is crux when it is directly related to
+    #   (a) the SANITY CHECK's two halves  -> the trap and expert anchors, and
+    #   (b) the FINAL ANSWER               -> a terminal step of the derivation,
+    #                                         or a decision.
+    # These define the core analytical task.
+    #
+    # It was connected_to_anchors(dag, anchors): every verifier connected to any
+    # anchor, ancestors AND descendants. On a fully connected derived graph that
+    # reaches nearly everything — 11 anchors on one task became 19 of 22.
+    #
+    # The golden DELIVERABLE is deliberately not a ground. It restates the whole
+    # working, so "the target appears in the golden" matched 13 of 15 verifiers on
+    # one task and made the crux wider than connectivity did.
+    # This was connected_to_anchors(dag, anchors): every verifier connected to any
+    # anchor, ancestors AND descendants. On a fully connected derived graph that
+    # reaches nearly everything — 11 anchors on one task expanded to 19 of 22
+    # verifiers, which is the graph minus its isolated roots, not a crux set.
+    #
+    # The crux is the verifiers that define the core analytical task:
+    #   * those directly related to the GOLDEN DELIVERABLE's answers, and
+    #   * those directly related to the SANITY CHECK's two halves (the anchors).
+    # Both are direct properties of a verifier, not of its position in a graph.
+    direct = set(anchors)
+    if final_answer_ids is not None:
+        direct |= {i for i in final_answer_ids if i in by_id}
+    reachable_ids = [i for i in ids if i in direct]
 
     # --- expected-value filter ---
     # Keep only crux verifiers that have a frozen expected value (scoreable).
@@ -179,7 +216,8 @@ def select_crux(
         anchors_trap=sorted(set(trap)),
         anchors_expert=sorted(set(expert)),
         dropped_no_expected=dropped,
-        method="dag-reachability from trap+expert anchors, filtered to verifiers with a frozen expected value",
+        method=("direct: sanity-check anchors + final-answer verifiers, "
+                "filtered to verifiers with a frozen expected value"),
     )
 
 
