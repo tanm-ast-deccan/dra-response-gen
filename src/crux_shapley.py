@@ -137,10 +137,11 @@ def select_crux(
         step of the trajectory, or asserting a decision. Together with the anchors
         these are the crux; there is no graph expansion.
     expected_value_ids: verifiers that have a FROZEN EXPECTED VALUE. When given,
-        the crux is filtered to ONLY these (the expected-value filter): a verifier
-        with no frozen target cannot be matched by the scorer, so it would sit
-        UNOBSERVED forever and permanently block crux_cleared. Filtering here keeps
-        every crux verifier scoreable and shrinks over-inclusive reachability sets.
+        a verifier with no target is dropped UNLESS it is an anchor or a
+        final-answer verifier — those are crux by definition and are graded against
+        their own text, which is a sufficient standard for a decision or presence
+        check. Filtering on a number alone excluded the trap discriminator on a
+        real task and let a trapped response score 1.0.
     """
     ids = [v["id"] for v in all_vs]
     by_id = {v["id"]: v for v in all_vs}
@@ -203,11 +204,29 @@ def select_crux(
     # Keep only crux verifiers that have a frozen expected value (scoreable).
     # A reachable verifier with no target can never PASS (it stays UNOBSERVED and
     # blocks crux_cleared), so it is dropped from the crux here.
+    # A verifier the scorer cannot match would sit UNOBSERVED and permanently block
+    # crux_cleared, so an unscoreable one is dropped — but "unscoreable" is not the
+    # same as "has no numeric target". A presence or decision verifier stated in
+    # prose has nothing to freeze and is graded against its own text, which the
+    # scorer does perfectly well.
+    #
+    # Filtering on a frozen value alone dropped exactly the verifiers that encode
+    # the trap. On one task "States, unconditionally, DO NOT FLAG Industrial
+    # Coatings" is a sanity-check ANCHOR and the sole discriminator of the whole
+    # task, and it was excluded for lack of a number — so a response that fell for
+    # the trap scored crux_cleared=YES and 1.0000 on every metric.
+    #
+    # So: keep a targetless verifier when it is an ANCHOR or a FINAL-ANSWER
+    # verifier, because that is the definition of crux and its text is a
+    # sufficient standard. Drop a targetless one that qualified some other way.
     dropped: List[str] = []
     if expected_value_ids is not None:
         ev = set(expected_value_ids)
-        crux_ids = [i for i in reachable_ids if i in ev]
-        dropped = [i for i in reachable_ids if i not in ev]
+        keep_without_target = set(anchors) | set(final_answer_ids or ())
+        crux_ids = [i for i in reachable_ids
+                    if i in ev or i in keep_without_target]
+        dropped = [i for i in reachable_ids
+                   if i not in ev and i not in keep_without_target]
     else:
         crux_ids = reachable_ids
 

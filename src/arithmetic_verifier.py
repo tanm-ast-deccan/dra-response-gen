@@ -71,9 +71,39 @@ _UNARY_OPS = {
     ast.USub: operator.neg,
 }
 # A tiny whitelist of math functions the auditor may legitimately use
+def _flat(args):
+    """Accept either median(a, b, c) or median([a, b, c])."""
+    out = []
+    for a in args:
+        out.extend(a) if isinstance(a, (list, tuple)) else out.append(a)
+    return [float(x) for x in out]
+
+
+def _median(*args):
+    xs = sorted(_flat(args))
+    if not xs:
+        raise UnsafeExpression("median of nothing")
+    n = len(xs)
+    return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2.0
+
+
+def _mean(*args):
+    xs = _flat(args)
+    if not xs:
+        raise UnsafeExpression("mean of nothing")
+    return sum(xs) / len(xs)
+
+
+#: Whitelisted functions. MEDIAN AND MEAN WERE MISSING, which is not a small gap:
+#: comparable-company valuation is built on the median multiple, and with no way
+#: to express it the model emitted an EMPTY operation. That became UNVERIFIABLE,
+#: the gate blocked, and the task returned zero verifiers — on a claim whose
+#: arithmetic was in fact correct (median of six multiples = 20.71).
 _FUNCS = {
     "sqrt": math.sqrt, "abs": abs, "min": min, "max": max,
     "round": round, "sum": sum, "pow": pow, "log": math.log, "exp": math.exp,
+    "median": _median, "mean": _mean, "average": _mean, "avg": _mean,
+    "count": lambda *a: float(len(_flat(a))), "len": lambda *a: float(len(_flat(a))),
 }
 
 
@@ -81,9 +111,33 @@ class UnsafeExpression(Exception):
     pass
 
 
+def normalize_expr(expr: str) -> str:
+    """Rewrite spreadsheet/finance notation into Python before parsing.
+
+    "^" means EXPONENTIATION in Excel and in every finance write-up, and in Python
+    it is bitwise XOR. A discount factor written the natural way —
+    "1 / (1 + wacc/100) ^ years" — therefore failed with "operator not allowed:
+    BitXor", the claim came back UNVERIFIABLE, the gate blocked, and the task
+    returned zero verifiers. Bitwise operators have no meaning over the floats
+    these expressions carry, so the rewrite cannot change a valid expression's
+    value; it only makes an intended one readable.
+
+    Also handles the unicode forms of the arithmetic operators, which appear when
+    an expression is copied out of a document.
+    """
+    e = expr or ""
+    for a, b in (("\u00d7", "*"), ("\u00f7", "/"), ("\u2212", "-"),
+                 ("\u2013", "-"), ("\u2014", "-"), ("\u2044", "/")):
+        e = e.replace(a, b)
+    # ** first so an already-correct expression is untouched
+    e = e.replace("**", "\x00POW\x00").replace("^", "**").replace("\x00POW\x00", "**")
+    return e
+
+
 def safe_eval(expr: str, variables: Dict[str, float]) -> float:
     """Evaluate an arithmetic expression over the given variables. Raises
     UnsafeExpression for anything outside arithmetic + whitelisted functions."""
+    expr = normalize_expr(expr)
     try:
         tree = ast.parse(expr, mode="eval")
     except SyntaxError as e:

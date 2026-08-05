@@ -25,11 +25,29 @@ WHY EXCERPTS AND NOT A SEARCH TOOL
     built deterministically from the solution logic, so the same inputs always
     produce the same prompt.
 
-THE CACHE
-    Extraction of a 21.8 MB pdf is slow and identical every run. Text is cached on
-    disk keyed by (filename, size), under DRA_CACHE. Point that at whatever the
-    agent harness uses and both phases read the SAME text, so a value the agent
-    legitimately found cannot be flagged unsourced by the auditor.
+THE CACHE IS FOR THE AUDITOR ONLY — DO NOT SHARE IT WITH THE HARNESS
+    Extraction of a 21.8 MB pdf is slow and identical every run, so text is cached
+    on disk keyed by (filename, size) under DRA_CACHE.
+
+    An earlier version of this note suggested pointing DRA_CACHE at the agent
+    harness's staging directory so both phases read identical text. That was
+    wrong. EXTRACTION IS PART OF THE TASK. Finding the right figure in a
+    200-page annual report — locating the file, parsing the sheet, picking the
+    cell out of thousands, working past the layout noise — is work the benchmark
+    exists to measure. Handing the agent pre-extracted text removes it and makes
+    the task easier than it is meant to be.
+
+    The harness therefore stages RAW files and gives the agent read_file,
+    python_execute, bash_execute and list_directory to extract for itself. It has
+    no reference to this module, and must not acquire one.
+
+    The consistency worry that motivated the bad advice — that the agent might
+    legitimately find a value the auditor's extraction missed — is real but
+    small, and it resolves the other way: the auditor searches the COMPLETE
+    extracted text, which is a superset of any window the agent reads. If the
+    agent finds a figure the auditor cannot locate, that is a finding about
+    extraction fidelity worth investigating, not a reason to feed the agent the
+    auditor's homework.
 """
 
 from __future__ import annotations
@@ -243,8 +261,9 @@ def build_corpus_from_drive(drive_link: str, anchor_text: str,
     """Resolve a Drive reference, then build both views.
 
     staging_dir defaults under the cache rather than a fresh temp dir, so a 21.8 MB
-    pdf is downloaded once instead of on every run — and pointing DRA_CACHE at the
-    agent harness's directory makes both phases read identical text.
+    pdf is downloaded once instead of on every run. Keep this separate from the
+    harness's staging directory: see the module docstring on why the agent must do
+    its own extraction.
     """
     from src.file_resolver import FileResolver
 

@@ -176,6 +176,20 @@ Then output a SINGLE JSON object (after the </analysis> tag) with this schema:
 
 Rules:
 - Use variable names in "inputs" that exactly match the names in "operation".
+- OPERATORS: + - * / % // and ** for a power. "^" is also accepted and is read as
+  a power, since that is what it means in a spreadsheet — but "**" is preferred.
+  A discount factor is "1 / (1 + wacc/100) ** years".
+- THE FUNCTIONS YOU MAY USE IN "operation", and no others:
+    sqrt  abs  min  max  round  sum  pow  log  exp
+    median  mean  average  avg  count  len
+  A list literal is allowed, so a median over comparables is
+  "median([v1, v2, v3, v4, v5, v6])". Aggregations are NOT optional to express:
+  a claim with an empty operation is UNVERIFIABLE, blocks the arithmetic gate,
+  and returns a task with no verifiers at all. This happened to a median of six
+  EV/EBITDA multiples whose arithmetic was perfectly correct — median was simply
+  not available and the operation was left blank. If an operation genuinely
+  cannot be written with the functions above, say so in "detail" rather than
+  emitting an empty string.
 - "value" must be the raw number you read from the inputs (the code checks it \
 appears in the source).
 - Emit a claim for EVERY load-bearing figure, including intermediate steps.

@@ -25,6 +25,23 @@ import logging
 from dataclasses import dataclass
 from typing import Callable
 
+
+#: Default ceiling on a single read_file result.
+#:
+#: This was 0, meaning "lossless, never truncate", with the docstring telling the
+#: model to bound only a "pathological" input. A 21.8 MB annual report is not
+#: pathological — it is the normal case in finance, and it extracts to roughly
+#: 3,000,000 characters (~750,000 tokens), which no model accepts in one tool
+#: result. The call would fail or cost a fortune, and the model had no hint that
+#: another route existed.
+#:
+#: The ceiling is deliberately generous: most inputs fit under it untouched, and
+#: when one does not the message names the alternative rather than just stopping.
+#: Reading a 200-page report selectively — search, then read the pages that
+#: matter — is the skill the benchmark exists to measure, so the cap must push
+#: towards that and not remove it.
+DEFAULT_READ_CHARS = 100_000
+
 logger = logging.getLogger("dra.tools")
 
 
@@ -210,8 +227,12 @@ def _bash_execute(command: str) -> str:
     name="read_file",
     description=(
         "Read the contents of a file. Supports .txt, .csv, .json, .md, .py, "
-        ".xlsx (all sheets), .pdf (text extraction), .docx. Returns text "
-        "content truncated to 50,000 characters."
+        ".xlsx (all sheets), .pdf (text extraction), .docx. "
+        f"Text content is capped at {DEFAULT_READ_CHARS:,} characters by default. "
+        "When a file exceeds that, the result states how many characters remain "
+        "and how to reach them - use bash_execute or python_execute to search the "
+        "file and read only the region you need. Pass max_chars to raise the cap, "
+        "or max_chars=0 for a lossless read of a file you know is small."
     ),
     parameters={
         "type": "object",
@@ -225,14 +246,26 @@ def _bash_execute(command: str) -> str:
     },
 )
 
-def _read_file(path: str, max_chars: int = 0) -> str:
-    """Read a file to text for the model. Lossless by default (max_chars=0 = no
-    truncation). Pass a positive max_chars only to bound a pathological input.
+
+
+def _read_file(path: str, max_chars: int = -1) -> str:
+    """Read a file to text for the model.
+
+    Capped at DEFAULT_READ_CHARS by default. Pass max_chars=0 for a genuinely
+    lossless read (only sensible on a file you already know is small), or a
+    positive value to set your own ceiling.
+
+    When the cap bites, the result says how much remains and how to reach it:
+    python_execute with pdfplumber or openpyxl lets you search the file and read
+    only the part you need.
 
     Supported: text formats, .json (parsed + pretty-printed), .md, .xlsx/.xls,
     .pdf, .docx, .pptx (slides + tables + speaker notes, notes clearly labeled).
     """
     import os
+
+    if max_chars < 0:
+        max_chars = DEFAULT_READ_CHARS
 
     staging = os.environ.get("INDRAYUDH_STAGING_DIR", os.getcwd())
     if not os.path.isabs(path):
@@ -244,9 +277,24 @@ def _read_file(path: str, max_chars: int = 0) -> str:
 
     def cap(s: str) -> str:
         # max_chars <= 0 means lossless (no truncation).
-        if max_chars and len(s) > max_chars:
-            return s[:max_chars] + f"\n[... truncated at {max_chars} chars ...]"
-        return s
+        if not max_chars or len(s) <= max_chars:
+            return s
+        remaining = len(s) - max_chars
+        hint = ("python_execute with openpyxl" if ext in (".xlsx", ".xls")
+                else "python_execute with pdfplumber" if ext == ".pdf"
+                else "python_execute" if ext in (".docx", ".pptx")
+                else "bash_execute with grep, or python_execute")
+        return (s[:max_chars]
+                + f"\n\n[... TRUNCATED. This file extracts to {len(s):,} characters"
+                  f" and you have been shown the first {max_chars:,};"
+                  f" {remaining:,} characters remain, INCLUDING most of the"
+                  f" document body.\n"
+                  f" Do NOT assume a figure is absent because it is not above."
+                  f" To reach the rest, use {hint} to search the file and read"
+                  f" only the part you need — for example locate the page or"
+                  f" sheet containing a label, then extract that region."
+                  f" You may also call read_file again with a larger max_chars,"
+                  f" but a whole file of this size will not fit in context.]")
 
     try:
         # ---- JSON: parse + pretty-print (structured, not a raw wall of text) ----
@@ -417,6 +465,8 @@ def _read_file(path: str, max_chars: int = 0) -> str:
 
 
 # ─── Write file ───────────────────────────────────────────────────────────────
+
+
 
 @register_tool(
     name="write_file",

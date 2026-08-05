@@ -373,6 +373,23 @@ def _property_table(res: dict) -> str:
         extra.append(f"<li>step <b>{_esc(g.get('step'))}</b> has no verifier: "
                      f"{_esc(g.get('why_it_matters'))}<br>"
                      f"<i>proposed:</i> {_esc(g.get('proposed_verifier'))}</li>")
+    for t in res.get("target_disagreements") or []:
+        extra.append(f"<li><span class='pill bad'>target overridden</span> "
+                     f"<b>{_esc(t.get('verifier'))}</b>: the model emitted "
+                     f"{_esc(t.get('emitted'))} but the verifier's own text says "
+                     f"{_esc(t.get('from_text'))}. {_esc(t.get('detail'))}</li>")
+    for t in res.get("target_grammar_problems") or []:
+        extra.append(f"<li><span class='pill warn'>target unreadable</span> "
+                     f"<b>{_esc(t.get('verifier'))}</b> ({_esc(t.get('form'))}): "
+                     f"{_esc(t.get('detail'))}</li>")
+    if res.get("targets_emitted_only"):
+        extra.append(f"<li><span class='pill warn'>no target clause</span> "
+                     f"{_esc(', '.join(res['targets_emitted_only']))} — target "
+                     f"taken from the model's emission, not from the text</li>")
+    for m in va.get("split_children_missing_target") or []:
+        extra.append(f"<li><span class='pill bad'>unscoreable child</span> "
+                     f"<b>{_esc(m.get('parent'))}{_esc(m.get('suffix'))}</b>: "
+                     f"{_esc(m.get('detail'))}<br>{_esc(m.get('text'))}</li>")
     for t in va.get("trap_passes_band") or []:
         extra.append(f"<li><span class='pill bad'>not falsifiable</span> "
                      f"<b>{_esc(t.get('verifier'))}</b>: {_esc(t.get('detail'))}</li>")

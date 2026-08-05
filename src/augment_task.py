@@ -87,9 +87,19 @@ class AugmentResult:
     #: Verifiers with no frozen target. They cannot be scored, and select_crux
     #: drops them silently, so they must be counted somewhere visible.
     verifiers_without_target: List[str] = field(default_factory=list)
+    #: The subset whose text states a value, so a missing target IS a defect.
+    verifiers_value_bearing_without_target: List[str] = field(default_factory=list)
     #: Verifiers testing the final answer — terminal-mapped or decision-kind.
     #: One of the two direct grounds for crux; the other is the anchors.
     final_answer_verifiers: List[str] = field(default_factory=list)
+    #: Verifiers whose frozen target came from the model's emission because their
+    #: text carries no readable target clause.
+    targets_emitted_only: List[str] = field(default_factory=list)
+    #: Where the model's emitted target and the verifier's own text named
+    #: DIFFERENT quantities. The text wins; this records what was overridden.
+    target_disagreements: List[dict] = field(default_factory=list)
+    #: Target clauses that could not be read — multi-value, or malformed.
+    target_grammar_problems: List[dict] = field(default_factory=list)
     #: [{parent, children, target_went_to, parent_text}] — splits APPLIED. Children
     #: take suffixed ids (V5 -> V5a, V5b) so no existing id is renumbered.
     verifier_splits_applied: List[dict] = field(default_factory=list)
@@ -395,9 +405,53 @@ def augment_task(
     res.augmented_verifiers_text = aug_text
     valid_ids = {v["id"] for v in all_vs}
 
-    # frozen scoring targets — needed before the property call and before mapping
-    ev = aug.get("expected_values", {}) or {}
-    res.expected_values = {k: v for k, v in ev.items() if k in valid_ids}
+    # --- frozen scoring targets ---------------------------------------------
+    # DERIVED FROM THE VERIFIER TEXT, not taken from the model's separate
+    # emission. The text already carries the standard — the `toleranced` property
+    # obliges it to — so a second copy is not a second standard, it is an index
+    # over the first, and the two can drift.
+    #
+    # They did. On one task the augment call rewrote all 14 verifiers, reassigning
+    # which quantity each id carries, while emitting expected_values against the
+    # OLD mapping: V4's text said 15,967.90 and its target held 28,329.84, V5 said
+    # 18,374.82 and held 15,967.90, and so on down the chain. Every numeric crux
+    # verifier scored a different quantity than it stated. audit_verifier_changes
+    # flagged 14 of 14 undeclared edits and the property call wrote "re-freeze
+    # target" 14 times; nothing acted on either. A target parsed from the text it
+    # describes cannot desynchronise from it.
+    from src.verifier_grammar import derive_expected_values
+
+    emitted = {k: v for k, v in (aug.get("expected_values") or {}).items()
+               if k in valid_ids}
+    derived, grammar_problems = derive_expected_values(
+        format_verifiers_ids(all_vs))
+    res.target_grammar_problems = grammar_problems
+
+    merged, disagreed = {}, []
+    for vid in valid_ids:
+        dv, em = derived.get(vid), emitted.get(vid)
+        if dv:
+            # keep the emitted metadata (unit, source_of_verification) but the
+            # value and band come from the text
+            base = dict(em) if em else {}
+            base.update(dv)
+            if em and isinstance(em.get("value"), (int, float)) \
+                    and isinstance(dv.get("value"), (int, float)):
+                tol = max(abs(dv["value"]) * 0.02, abs(dv.get("tol") or 0), 0.5)
+                if abs(em["value"] - dv["value"]) > tol:
+                    disagreed.append({"verifier": vid, "emitted": em["value"],
+                                      "from_text": dv["value"],
+                                      "detail": ("the model's target and the "
+                                                 "verifier's own text name "
+                                                 "different quantities; the text "
+                                                 "wins")})
+            merged[vid] = base
+        elif em:
+            # no readable target clause: keep what the model emitted, but say so
+            merged[vid] = em
+            res.targets_emitted_only.append(vid)
+    res.expected_values = merged
+    res.target_disagreements = disagreed
 
     # --- Stage 3: the graph is DERIVED from the trajectory ------------------
     # The augmenter's asserted dag_edges is gone. It was one model's opinion,
@@ -537,6 +591,15 @@ def augment_task(
     # otherwise, since select_crux simply drops it.
     res.verifiers_without_target = [v["id"] for v in all_vs
                                     if v["id"] not in res.expected_values]
+    # Only a verifier whose TEXT STATES A VALUE needs a frozen target. A presence
+    # or decision check stated in prose legitimately has none and is graded against
+    # its own text — counting those as defects would fail a package for doing the
+    # right thing.
+    from src.verifier_audit import _VALUE_IN_TEXT
+    res.verifiers_value_bearing_without_target = [
+        v["id"] for v in all_vs
+        if v["id"] not in res.expected_values
+        and _VALUE_IN_TEXT.search(v.get("text", "") or "")]
     pending = res.judgment_changes_pending_sme or []
     if not res.proceedable:
         res.scoreable = False
@@ -562,8 +625,23 @@ def augment_task(
     elif not res.crux_ids:
         res.scoreable = False
         res.not_scoreable_reason = "no crux verifiers selected"
-    elif (res.verifiers_without_target
-          and len(res.verifiers_without_target) > len(all_vs) // 3):
+    elif (len(((res.verifier_change_audit or {}).get("undeclared_edits")) or [])
+          >= max(3, int(0.8 * ((res.verifier_change_audit or {}).get("n_before")
+                               or 10 ** 6)))):
+        # The verifier block was rewritten wholesale without declaring any of it.
+        # On one task all 14 were silently rewritten, reassigning which quantity
+        # each id carried — detected here, acted on nowhere, and the package was
+        # reported SALVAGEABLE with every numeric target one position out.
+        ue = (res.verifier_change_audit or {}).get("undeclared_edits") or []
+        res.scoreable = False
+        res.not_scoreable_reason = (
+            f"{len(ue)} of "
+            f"{(res.verifier_change_audit or {}).get('n_before')} verifiers were "
+            f"rewritten without being declared, so the verifier set cannot be "
+            f"reconciled with the authored one: {', '.join(sorted(ue)[:8])}"
+            + ("..." if len(ue) > 8 else ""))
+    elif (res.verifiers_value_bearing_without_target
+          and len(res.verifiers_value_bearing_without_target) > len(all_vs) // 3):
         # A verifier with no frozen target cannot be scored at all. select_crux
         # drops those silently, so crux_ids stays non-empty and every check above
         # passes — which reported scoreable=True on a package where 20 of 31
