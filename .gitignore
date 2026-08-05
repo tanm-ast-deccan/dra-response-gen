@@ -113,14 +113,18 @@ runs_dir/
 scratch/
 SME_data/
 sme_upload_out/
+audit_check/
 
 
 # ─── Misc ─────────────────────────────────────────────────
 scratch.py
+test*.py
+test*.js
 *.bak
 *.tmp
 *.temp
 *.cache
+.dra_cache/
 .cache/
 tmp/
 temp/results/

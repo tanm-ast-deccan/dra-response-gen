@@ -121,6 +121,22 @@ _OPENER_BARE = re.compile(
 )
 
 
+#: Same as _OPENER_V but matches anywhere, not only at a line start. Used ONLY
+#: when the inline markers form a consecutive run — see parse_verifiers.
+_OPENER_V_INLINE = re.compile(
+    r"""
+    (?:^|\n|[,;])\s*              # cell start, new line, OR a comma/semicolon
+    [\"'\u201c\u2018]?
+    [Vv]\s*
+    (\d{1,3})
+    \s*
+    (?: [\-‐‑‒–—−] | [:|.)] )
+    [ \t]*
+    """,
+    re.VERBOSE,
+)
+
+
 def _select_openers(norm: str):
     """Choose opener mode per cell. If any V-prefixed opener exists, use ONLY
     those (bare digits are body text). Otherwise fall back to strict bare-number
@@ -148,6 +164,32 @@ def parse_verifiers(cell: str) -> VerifierParseResult:
     # Select opener mode per cell (V-prefix wins; bare-number only if no V).
     padded = "\n" + norm  # prefix \n so ^ matches the first line
     matches, mode = _select_openers(norm)
+
+    # INLINE CELLS. _OPENER_V requires a line start, so a cell written as
+    # "V1: ..., V2: ..., V3: ..." on ONE line yields a single record containing
+    # everything — and the gate below passed it as CLEAN. Observed in the wild:
+    # 12 verifiers collapsed into 1, silently.
+    #
+    # Splitting on every V-marker regardless of position is unsafe on its own,
+    # because a verifier's text can reference another ("consistent with V2"). The
+    # discriminator is SEQUENCE: if the inline markers form a consecutive run
+    # 1..N and there are more of them than line-start openers found, the cell is
+    # a one-line list and splitting is correct. A stray back-reference does not
+    # produce a consecutive run.
+    inline = list(_OPENER_V_INLINE.finditer(padded))
+    if len(inline) > len(matches):
+        idxs = [int(m.group(1)) for m in inline]
+        if idxs == list(range(1, len(idxs) + 1)):
+            matches, mode = inline, mode + "+inline"
+            result.reasons.append(
+                f"cell written inline on one line; split on {len(inline)} "
+                f"consecutive V-markers instead of {len(_select_openers(norm)[0])} "
+                f"line-start opener(s)")
+        else:
+            result.reasons.append(
+                f"{len(inline)} V-markers found but only {len(matches)} at a line "
+                f"start, and the markers are not a consecutive run "
+                f"({idxs[:8]}...) — verifiers may be lost")
     if not matches:
         result.status = "UNCERTAIN"
         result.reasons.append("no numbered verifier tokens found")
@@ -184,7 +226,11 @@ def parse_verifiers(cell: str) -> VerifierParseResult:
 
     # (c) independent count cross-check using the SAME mode, as a guard against a
     #     missed split. Re-run the chosen opener regex and compare counts.
-    independent_re = _OPENER_V if mode == "V-prefix" else _OPENER_BARE
+    # the cross-check must use the mode actually chosen, including inline
+    if mode.startswith("V-prefix"):
+        independent_re = _OPENER_V_INLINE if "inline" in mode else _OPENER_V
+    else:
+        independent_re = _OPENER_BARE
     independent = len(list(independent_re.finditer(padded)))
     if independent != len(records):
         reasons.append(f"independent token count {independent} != parsed records {len(records)}")

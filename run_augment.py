@@ -21,7 +21,8 @@ import argparse, csv, json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from src.config import configure_api
-from src.auditor import build_header_map, get_field, HeaderError
+from src.auditor import (build_header_map, get_field, HeaderError,
+                        read_task_csv)
 from src.prompt_evaluator import DEFAULT_JUDGE_MODEL
 from src.augment_task import augment_task
 from src.augment_report import write_augment_report, write_golden_report
@@ -44,30 +45,18 @@ def _blank_new_cols(row):
 
 
 def load_rows(path):
-    with open(path, encoding="utf-8-sig") as f:
-        r = csv.DictReader(f)
-        raw_fields = r.fieldnames or []
-        rows = list(r)
-    # Drop phantom columns from trailing commas in the source header (Excel
-    # exports often leave a long run of empty-named columns). Keep only named
-    # columns; strip the corresponding keys from every row so they don't
-    # re-serialize into the output CSV.
-    fields = [h for h in raw_fields if h and h.strip()]
-    dropped = [h for h in raw_fields if not (h and h.strip())]
-    if dropped:
-        print(f"[load] dropped {len(dropped)} empty/unnamed source column(s)",
-              file=sys.stderr)
-        for row in rows:
-            for k in list(row.keys()):
-                if k is None or not str(k).strip():
-                    row.pop(k, None)
-    return fields, rows
+    """Banner-row tolerant; see src.auditor.read_task_csv."""
+    return read_task_csv(path)
 
 
 def main():
     ap = argparse.ArgumentParser(description="Direct prompt-package augmenter")
     ap.add_argument("--csv", required=True)
     ap.add_argument("--row", type=int, default=None)
+    ap.add_argument("--task", action="append", default=None,
+                    help="select by task_id instead of row number; repeatable. "
+                         "A task appearing on several rows (one per model) is "
+                         "augmented once — the verifiers and golden are per task.")
     ap.add_argument("--from", dest="row_from", type=int, default=None)
     ap.add_argument("--to", dest="row_to", type=int, default=None)
     ap.add_argument("--out-dir", default="output/augmented")
@@ -84,7 +73,23 @@ def main():
         print(f"ERROR: {e}"); sys.exit(2)
 
     n = len(rows)
-    if args.row is not None:
+    if args.task:
+        wanted = set(args.task)
+        # rows are 1-indexed to match --row; dedupe by task since the verifier set
+        # and golden are per task, not per response
+        seen, idxs = set(), []
+        for i, r in enumerate(rows, 1):
+            tid = get_field(r, hmap, "task_id")
+            if tid in wanted and tid not in seen:
+                seen.add(tid)
+                idxs.append(i)
+        missing = wanted - seen
+        if missing:
+            print(f"ERROR: task_id(s) not in the csv: {sorted(missing)}")
+            print(f"       first few present: "
+                  f"{[get_field(r, hmap, 'task_id') for r in rows[:5]]}")
+            sys.exit(2)
+    elif args.row is not None:
         idxs = [args.row]
     elif args.row_from or args.row_to:
         idxs = list(range((args.row_from or 1), (args.row_to or n) + 1))
@@ -106,19 +111,46 @@ def main():
 
         # fetch input files (raw) so the auditor's provenance layer runs
         files_text, files_names, skipped = "", [], []
+        corpus = None
         if not args.no_files:
             dl = get_field(row, hmap, "drive_link")
             if dl.strip():
                 try:
-                    from src.gdrive_raw_fetcher import fetch_gdrive_folder_raw
-                    files_text, files_names, skipped = fetch_gdrive_folder_raw(dl)
+                    # build_corpus_from_drive replaces the truncating fetcher:
+                    # it keeps the COMPLETE text for code to search and a bounded
+                    # index-plus-excerpts view for the prompt, and caches
+                    # extraction so a 21.8 MB pdf is parsed once.
+                    from src.input_corpus import build_corpus_from_drive
+                    corpus = build_corpus_from_drive(
+                        dl, get_field(row, hmap, "solution_logic"))
+                    files_names = [f["name"] for f in corpus.files
+                                   if f.get("extracted")]
+                    skipped = list(corpus.skipped)
+                    files_text = corpus.full_text
+                    # Report this positively. A whole batch once audited with no
+                    # input files because a /u/1/ account segment in the folder
+                    # URL made every reference unparseable, and nothing in the
+                    # output said so — the run looked normal.
+                    if files_names:
+                        print(f"    input files: {len(files_names)} fetched | "
+                              f"{corpus.full_chars:,} chars searchable | "
+                              f"prompt view {corpus.prompt_chars:,} chars "
+                              f"({corpus.n_excerpts} excerpt(s)) | cache "
+                              f"{corpus.cache_hits}hit/{corpus.cache_misses}miss")
+                    else:
+                        print(f"    !! NO INPUT FILES READ from {dl[:60]} — every "
+                              f"figure in the golden will be unverifiable against "
+                              f"source")
                     if skipped:
                         print(f"    !! SKIPPED INPUTS (golden may be degraded): {skipped}")
                 except Exception as e:
-                    print(f"    drive fetch failed: {e}")
+                    print(f"    !! drive fetch failed: {e}")
+            else:
+                print("    (no drive link on this row)")
 
         try:
             res = augment_task(row, hmap, input_files_text=files_text,
+                               input_corpus=corpus,
                                input_files_names=files_names, model_name=model,
                                skipped_inputs=skipped)
             rd = res.to_dict()
@@ -162,7 +194,16 @@ def main():
             write_augment_report(rd, os.path.join(args.out_dir, f"{task_id}_augment.html"))
             write_golden_report(rd, os.path.join(args.out_dir, f"{task_id}_golden.html"))
 
+        cov = rd.get("input_coverage") or {}
+        vt = (rd.get("augmented_verifiers") or "")
         print(f"    -> {rd['audit_verdict']} | crux {len(rd['crux_ids'])} verifiers"
+              + (f"/{len(vt.splitlines())}" if vt else "")
+              + (f" | files {len(cov.get('files_read') or [])}"
+                 + ("" if cov.get("complete") else " INCOMPLETE") if cov else "")
+              + (f" | {len(rd.get('judgment_pending_json') and json.loads(rd['judgment_pending_json']) or [])} question(s)"
+                 if rd.get("judgment_pending_json") else "")
+              + (f" | not scoreable: {rd.get('not_scoreable_reason','')[:44]}"
+                 if not rd.get("scoreable", True) else "")
               + (f" | ERROR {rd['error']}" if rd.get("error") else ""))
 
     out_csv = os.path.join(args.out_dir, "augmented_prompt_packages.csv")
@@ -171,12 +212,58 @@ def main():
         present = [c for c in NEW_COLS if c in out_rows[0]]
         print(f"[debug] out_rows={len(out_rows)} | new cols on row0: "
               f"{len(present)}/{len(NEW_COLS)} | header cols={len(out_fields)}")
+
+    # MERGE by task_id rather than replacing the file. This used to be a plain
+    # "w" of only the rows processed, so a single-task re-run silently destroyed
+    # every other task's augmented columns — a whole batch reduced to one row.
+    existing, kept = [], 0
+    if os.path.exists(out_csv):
+        try:
+            with open(out_csv, encoding="utf-8-sig", newline="") as f:
+                existing = list(csv.DictReader(f))
+        except Exception as e:
+            print(f"[merge] could not read the existing csv ({e}); it will be "
+                  f"replaced. A copy is at {out_csv}.bak")
+        if existing:
+            import shutil
+            shutil.copyfile(out_csv, out_csv + ".bak")
+
+    def _tid(r):
+        return str(r.get("task_id") or "").strip()
+
+    # Preserve the ORIGINAL row order and substitute in place, so the file still
+    # reads in sheet order and anything downstream that assumes it keeps working.
+    updated = {_tid(r): r for r in out_rows if _tid(r)}
+    merged, seen = [], set()
+    for r in existing:
+        t = _tid(r)
+        if t and t in updated:
+            merged.append(updated[t])
+        else:
+            merged.append(r)
+            kept += 1
+        if t:
+            seen.add(t)
+    for r in out_rows:                      # tasks not previously in the file
+        if _tid(r) not in seen:
+            merged.append(r)
+
+    # union the columns so an older row missing a newly-added field still writes
+    fields = list(out_fields)
+    for r in existing:
+        for k in r:
+            if k and k not in fields:
+                fields.append(k)
+
     with open(out_csv, "w", encoding="utf-8", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=out_fields, extrasaction="ignore")
+        w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
-        for r in out_rows:
+        for r in merged:
             w.writerow(r)
-    print(f"\nWrote {len(out_rows)} row(s) -> {out_csv}")
+    print(f"\nWrote {len(out_rows)} new/updated row(s), kept {kept} existing "
+          f"-> {out_csv}"
+          + (f"  (previous version saved as {os.path.basename(out_csv)}.bak)"
+             if existing else ""))
 
 
 if __name__ == "__main__":

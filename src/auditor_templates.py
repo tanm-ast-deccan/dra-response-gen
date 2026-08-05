@@ -49,6 +49,31 @@ the readings and name the single question the author must answer — do not over
 call BROKEN when the likelier story is an unstated assumption, a missing input, \
 or temporal drift.
 
+Finding categories — use these exact meanings, not what the name suggests:
+- units_scale: a figure is right in magnitude but wrong in unit or scale (a ratio
+  written as a percentage, crore against rupees, minutes against hours).
+- decision_inversion: the golden's stated decision is the opposite of what its own
+  corrected numbers support. Always BROKEN.
+- infeasible_optimum: the stated optimum violates a constraint the task imposes,
+  or a better feasible answer exists.
+- missing_input: a value the solution needs that appears in no model-facing file.
+- leakage: the answer, the trap, or the method is disclosed in material the model
+  can see. Includes phrases that signal a trap exists, not only the answer itself.
+- internal_inconsistency: two parts of the golden assert incompatible things (the
+  same quantity at two values; a total that does not match its parts).
+- unstated_assumption: the intended answer needs an assumption the prompt never
+  states, so a competent solver could defensibly answer otherwise.
+- temporal_drift: a live value is not pinned to a date or source, so the golden
+  decays as the world moves.
+- over_tight_verifier: a verifier's tolerance is narrower than the task's own
+  determinism, so a correct answer fails on rounding.
+- invalid_trap: the trap does not discriminate — the lazy and expert paths reach
+  the same answer, so it tests nothing.
+- lazily_placed_trap: the trap is discoverable without the intended reasoning
+  (flagged in a filename, a comment, or an obvious outlier).
+- irreducible_subjectivity: the core answer has no single defensible result, so
+  no verifier can be written for it. Drives NON_DETERMINISTIC.
+
 Verdict vocabulary:
 - SOUND: derivable, consistent, trap-valid, deterministic, no leakage.
 - SALVAGEABLE: fixable without changing the intended answer (unstated assumption, \
@@ -218,6 +243,33 @@ Then output a SINGLE JSON object (after </analysis>):
   "primary_reason": "one line",
   "decision_inversion": false,
   "corrected_solution_logic": "the full corrected solution logic text, or empty string if no change",
+  "corrected_claims": [
+    {{
+      "id": "C1",
+      "label": "short name for the figure",
+      "inputs": [
+        {{"name": "var_name", "value": 170, "source": "where this came from",
+          "from_claim": "C0 or null", "source_type": "file|claim|metadata"}}
+      ],
+      "operation": "var_name / other_var",
+      "claimed_result": 85,
+      "trap_value": 67.5,
+      "solution_step": "Step 2"
+    }}
+  ],
+  "judgment_steps": [
+    {{
+      "id": "J1",
+      "question": "the decision or ruling this step makes",
+      "consumes": ["C6", "C4"],
+      "ruling": "what the corrected solution logic concludes",
+      "basis": "the quoted text this rests on",
+      "solution_step": "Step 6"
+    }}
+  ],
+  "corrected_prompt": "the full corrected prompt text, or empty string if no change",
+  "corrected_sanity_check": "the full corrected sanity check text, or empty string if no change",
+  "corrected_verifiers": "the full corrected verifier block as 'V1: ...' lines, one per line, or empty string if no change",
   "changes": [
     {{
       "artifact": "prompt|sanity_check|solution_logic|verifiers",
@@ -236,6 +288,86 @@ Then output a SINGLE JSON object (after </analysis>):
   ],
   "prose_findings": "a concise human-readable summary for the SME (2-5 sentences)"
 }}
+
+Rules for "corrected_claims" — this is the derivation, and it is consumed by code:
+- Re-emit EVERY claim, not only the ones you changed. The list replaces your
+  call-1 claims wholesale and is recomputed from scratch, so an omitted claim
+  disappears from the derivation.
+- Apply your corrections to them. Where a code verdict said ARITHMETIC_ERROR,
+  either fix the operation or fix the claimed_result so the two agree — do not
+  re-emit a claim you know does not reconcile.
+- "from_claim" is the ID OF THE CLAIM WHOSE OUTPUT IS THIS INPUT, or null when
+  the value was read from a source file. This is what turns a flat list into an
+  ordered derivation, so it is the single most important field here. If input
+  "peak_total" is the result of C1, write "from_claim": "C1".
+- Never set from_claim on a value you read from an input file. A raw file value
+  has no parent step, and inventing one corrupts the dependency graph.
+- "solution_step" groups a claim under a step of the corrected solution logic.
+  Omit it if you cannot place the claim.
+- NEVER INLINE A VALUE YOU COMPUTED. If an input is a figure you worked out
+  rather than read, it must be its OWN claim, with this input pointing at it via
+  from_claim. Writing "peak_arrivals = 170" as a literal input hides the sum of
+  eight arrival buckets that produced it: the derivation loses a step, and code
+  cannot find 170 in any file so it reads as an unsourced number. Emit the sum as
+  a claim and reference it.
+- "value" IS ALWAYS MANDATORY on every input, whatever its source_type. Give the
+  actual number. source_type records WHERE the number came from; it does NOT
+  delegate the lookup to code. An input written as
+  {{"name": "R001_reported", "value": null, "source_type": "file"}} cannot be
+  checked at all: the arithmetic has nothing to evaluate, and the claim is thrown
+  out as unverifiable. Write {{"name": "R001_reported", "value": 9200, ...}}.
+- "operation" IS ALWAYS MANDATORY. A claim with a claimed_result and no operation
+  states an answer with no working, which is exactly what cannot be verified.
+- "source_type" says WHERE each input came from, and decides whether code checks
+  it against the files:
+    "file"     — read verbatim from a supplied file. Code will look for it, so it
+                 must actually be there.
+    "claim"    — the output of another claim. Set from_claim as well.
+    "metadata" — arithmetic on something the TASK states rather than a data cell:
+                 "the 9:00-10:30 sub-window is 1.5 hours", "a quarter is 3
+                 months". These never appear verbatim in a file and are not
+                 errors. Use this only for values derivable from stated facts,
+                 never as a way to avoid sourcing a real figure.
+
+Rules for "judgment_steps" — the non-arithmetic moves:
+- These are the comparisons, selections, exclusions and rulings that consume the
+  numbers: choosing an option, rejecting an alternative, declaring a bottleneck.
+  Without them the derivation is a pile of arithmetic with no conclusion.
+- IDs must be J1, J2, ... and must not collide with claim IDs.
+- "consumes" may name claims or earlier judgment steps. A judgment step that
+  consumes nothing is almost certainly not part of the derivation.
+- "basis" must quote or closely paraphrase the text it rests on.
+
+Rules for "corrected_verifiers" specifically:
+- Emit the whole block as "V1: ...\nV2: ..." lines, keeping every id and its
+  numbering. Do not renumber, drop or reorder verifiers.
+- RETARGETING a verifier to a figure YOUR OWN correction changed is MECHANICAL.
+  If you corrected global utilization from 88.34% to 91.53%, then a verifier
+  pinning 88.34% is now wrong by arithmetic, the new target is determined, and you
+  should fix it and log it as MECHANICAL. Leaving it stale ships a scoring
+  criterion that contradicts the golden it scores against.
+- RESHAPING a verifier is JUDGMENT_REQUIRED: widening or narrowing a tolerance
+  band, changing what it tests, choosing between two defensible bases (outbound
+  vs inbound throughput). State the question and LEAVE THE ORIGINAL TEXT in
+  place — do not resolve it in the corrected block. Code compares the block
+  against what you declared, so a judgment item you silently resolved will be
+  reported.
+
+Rules for the corrected artifacts:
+- Emit the FULL replacement text, not a diff. Downstream code consumes these
+  directly; a fragment would silently truncate the artifact.
+- Emit an empty string when nothing changed. Do not echo the original back —
+  an unchanged artifact and a rewritten-but-identical one are different facts.
+- Every edit inside a corrected artifact must ALSO appear as an entry in
+  "changes", so the reviewer sees each edit with its rationale rather than
+  having to diff two blocks of prose.
+- A JUDGMENT_REQUIRED item must NOT be resolved inside a corrected artifact.
+  Leave the original wording and pose the question; rewriting it there would
+  bury an authorial decision in a wall of text.
+- The prompt is the contract with the model under test. Correcting it changes
+  what the task asks, so restrict prompt edits to removing leakage and fixing
+  outright errors — never to making the task easier or narrowing the solution
+  space.
 
 Output ONLY the <analysis> block then the JSON.
 """

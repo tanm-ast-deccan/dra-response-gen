@@ -33,6 +33,9 @@ Outcomes per claim:
   CONFIRMED          arithmetic correct AND (provenance ok OR not checked)
   ARITHMETIC_ERROR   recomputed result != claimed_result
   INPUT_ERROR        a declared input value not found in source text
+  MISLABELLED_INPUT  an input declared source_type='file' is absent from every
+                     file — usually a computed subtotal written as a read, which
+                     hides the computation that produced it
   UNVERIFIABLE       operation not safely evaluable, or source not parseable
 
 No code from the LLM is executed. Only arithmetic expressions over numbers are
@@ -46,7 +49,7 @@ import math
 import operator
 import re
 from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +191,15 @@ class ClaimInput:
     name: str
     value: Any
     source: str = ""
+    #: The claim whose output produced this input, when the producer states it.
+    #: None for a value read from a source file. Set by the auditor, never here.
+    from_claim: Optional[str] = None
+    #: "file" | "claim" | "metadata". A METADATA value is arithmetic on something
+    #: the task states rather than a data cell — "9:00-10:30 duration = 1.5
+    #: hours". It will never appear verbatim in a file, so provenance-checking it
+    #: produces a false INPUT_ERROR. Observed on real tasks: hours_first=1.5,
+    #: hours_last=0.5.
+    source_type: str = ""
 
 
 @dataclass
@@ -207,7 +219,10 @@ class ArithmeticClaim:
             label=str(d.get("label", "")),
             inputs=[ClaimInput(name=str(i.get("name", "")),
                                value=i.get("value"),
-                               source=str(i.get("source", "")))
+                               source=str(i.get("source", "")),
+                               from_claim=(str(i["from_claim"])
+                                           if i.get("from_claim") else None),
+                               source_type=str(i.get("source_type", "") or ""))
                     for i in d.get("inputs", [])],
             operation=str(d.get("operation", "")),
             claimed_result=d.get("claimed_result"),
@@ -224,6 +239,14 @@ class ClaimVerdict:
     recomputed: Optional[float] = None
     claimed: Optional[float] = None
     matches_trap: bool = False       # did the claimed value equal the trap value?
+    #: The operation as declared. Previously dropped after verification, which
+    #: left a derivation with values but no arithmetic.
+    operation: str = ""
+    #: What a solver who fell for the trap would get instead. Also previously
+    #: dropped, keeping only the matches_trap boolean — so nothing downstream
+    #: could NAME the wrong answer, which is exactly what a falsifiable verifier
+    #: has to do ("must be 92.60, not 82").
+    trap_value: Optional[float] = None
     detail: str = ""
     input_provenance: List[dict] = field(default_factory=list)
 
@@ -243,15 +266,35 @@ def _rel_close(a: float, b: float, rel_tol: float = 1e-3, abs_tol: float = 1e-6)
 # raw input file: "C1 result", "from C2", "result of C3", "C4 output",
 # "(C5)", "derived in C6", or an explicit "derived"/"computed"/"intermediate".
 _DERIVED_SOURCE_RE = re.compile(
-    r"\bC\d+\b|\bderived\b|\bcomputed\b|\bintermediate\b|\bresult of\b|\bfrom step\b",
+    r"\bC\d+[A-Za-z0-9_]*\b|\bderived\b|\bcomputed\b|\bintermediate\b"
+    r"|\bresult of\b|\bfrom step\b",
     re.IGNORECASE,
 )
 
+#: Any token that could be a claim id, so prose can be tested against the ids
+#: that ACTUALLY exist rather than against a guess at their shape. Real goldens
+#: use C1, C8SUM, C10A; a regex over id shape is always one convention behind.
+_ID_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
 
-def _is_derived_source(source: str) -> bool:
+
+def _is_derived_source(source: str,
+                       known_ids: Optional[Set[str]] = None,
+                       self_id: str = "") -> bool:
     """True if this input is the output of a prior claim/step (so it should NOT
-    be expected to appear verbatim in the source files)."""
-    return bool(source and _DERIVED_SOURCE_RE.search(source))
+    be expected to appear verbatim in the source files).
+
+    With `known_ids` this is a set-membership test against the ids that exist in
+    this task, which works for any naming convention. The regex is the fallback.
+    """
+    if not source:
+        return False
+    if known_ids:
+        for tok in _ID_TOKEN_RE.findall(source):
+            if tok != self_id and tok in known_ids:
+                return True
+        return bool(re.search(r"\bderived\b|\bcomputed\b|\bintermediate\b"
+                              r"|\bresult of\b|\bfrom step\b", source, re.I))
+    return bool(_DERIVED_SOURCE_RE.search(source))
 
 
 # An inline arithmetic expression embedded in a source string, e.g.
@@ -315,6 +358,7 @@ def verify_claim(
     claim: ArithmeticClaim,
     source_text: Optional[str] = None,
     rel_tol: float = 1e-3,
+    known_claim_ids: Optional[Set[str]] = None,
 ) -> ClaimVerdict:
     """Run the A (arithmetic) and C (provenance) checks on one claim."""
     # --- C-layer: provenance (only if source text supplied) ---------------
@@ -325,16 +369,27 @@ def verify_claim(
     # produces false INPUT_ERRORs on legitimate intermediate values.
     provenance: List[dict] = []
     input_error = False
+    mislabelled: List[str] = []          # file-typed inputs absent from source
     variables: Dict[str, float] = {}
     for inp in claim.inputs:
         num = parse_number(inp.value)
         if num is not None:
             variables[inp.name] = num
-        is_derived = _is_derived_source(inp.source)
+        # An explicit from_claim is authoritative; the regex is only the fallback.
+        is_derived = bool(inp.from_claim) or _is_derived_source(
+            inp.source, known_claim_ids, claim.id)
+        # A METADATA value is arithmetic on something the task states, not a data
+        # cell: "9:00-10:30 duration = 1.5 hours". It cannot appear verbatim in a
+        # file, so provenance-checking it manufactures a false INPUT_ERROR.
+        is_metadata = (inp.source_type or "").lower() == "metadata"
         entry = {"name": inp.name, "value": inp.value, "source": inp.source,
-                 "derived": is_derived, "source_kind": "raw", "found_in_source": None}
+                 "derived": is_derived, "from_claim": inp.from_claim,
+                 "source_type": inp.source_type,
+                 "source_kind": "raw", "found_in_source": None}
 
-        if is_derived:
+        if is_metadata:
+            entry["source_kind"] = "metadata"      # stated, not stored; skip
+        elif is_derived:
             entry["source_kind"] = "cross_claim"   # result of a prior claim; skip
         elif source_text is not None and num is not None:
             inline_expr = _extract_inline_expression(inp.source)
@@ -355,6 +410,15 @@ def verify_claim(
                 entry["found_in_source"] = _number_appears(num, source_text)
                 if entry["found_in_source"] is False:
                     input_error = True
+                    # A value the producer DECLARED as coming from a file, which
+                    # is not in the file, is a different animal from a value we
+                    # simply could not place. It is almost always a computed
+                    # subtotal mislabelled as a read — "arrivals_9_11 = 170",
+                    # which is the sum of eight buckets. That collapse hides an
+                    # unverified computation: neither layer ever checks the eight
+                    # buckets or the sum, so a misread bucket would pass.
+                    if (inp.source_type or "").lower() == "file":
+                        mislabelled.append(inp.name)
         provenance.append(entry)
 
     claimed = parse_number(claim.claimed_result)
@@ -392,6 +456,16 @@ def verify_claim(
         status = "ARITHMETIC_ERROR"
         detail = (f"recomputed {recomputed:g} from operation '{claim.operation}' "
                   f"!= claimed {claimed:g}")
+    elif mislabelled:
+        status = "MISLABELLED_INPUT"
+        detail = (
+            f"input(s) {mislabelled} are declared source_type='file' but do not "
+            f"appear in any supplied file. Almost always a computed subtotal "
+            f"written as a read: the arithmetic here evaluates fine, but the "
+            f"computation that PRODUCED the value is checked by nobody — neither "
+            f"its own inputs nor its sum. Emit that computation as its own claim "
+            f"and reference it via from_claim, or retype the input as "
+            f"'metadata' if it is genuinely derivable from a stated fact.")
     elif input_error:
         status = "INPUT_ERROR"
         bad = [p["name"] for p in provenance if p["found_in_source"] is False]
@@ -405,6 +479,7 @@ def verify_claim(
         id=claim.id, label=claim.label, status=status,
         recomputed=recomputed, claimed=claimed,
         matches_trap=matches_trap, detail=detail,
+        operation=claim.operation, trap_value=trap,
         input_provenance=provenance,
     )
 
@@ -456,7 +531,9 @@ def verify_claims(
     source_text: Optional[str] = None,
     rel_tol: float = 1e-3,
 ) -> List[ClaimVerdict]:
-    return [verify_claim(c, source_text=source_text, rel_tol=rel_tol) for c in claims]
+    known = {c.id for c in claims if c.id}
+    return [verify_claim(c, source_text=source_text, rel_tol=rel_tol,
+                         known_claim_ids=known) for c in claims]
 
 
 def summarize(verdicts: List[ClaimVerdict]) -> dict:
@@ -469,6 +546,7 @@ def summarize(verdicts: List[ClaimVerdict]) -> dict:
         "confirmed": counts.get("CONFIRMED", 0),
         "arithmetic_error": counts.get("ARITHMETIC_ERROR", 0),
         "input_error": counts.get("INPUT_ERROR", 0),
+        "mislabelled_input": counts.get("MISLABELLED_INPUT", 0),
         "unverifiable": counts.get("UNVERIFIABLE", 0),
         "any_error": counts.get("ARITHMETIC_ERROR", 0) + counts.get("INPUT_ERROR", 0) > 0,
     }

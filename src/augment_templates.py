@@ -69,10 +69,6 @@ Then output a SINGLE JSON object (after </analysis>):
       {{"title": "section name", "content": "full section content with the gold numbers"}}
     ]
   }},
-  "dag_edges": {{
-    "V1": [],
-    "V2": ["V1"]
-  }},
   "trap_anchor_ids": ["Vx"],
   "expert_anchor_ids": ["Vy", "Vz"],
   "augmented_verifiers": [
@@ -88,7 +84,6 @@ Then output a SINGLE JSON object (after </analysis>):
 
 Rules:
 - gold_deliverable.content must contain the actual gold numbers, not placeholders.
-- dag_edges must include EVERY verifier id (augmented ones too) as a key; roots map to [].
 - trap_anchor_ids: verifiers that check the Lazy-AI failure mode is avoided
   (e.g. "rejects the stale rate", "does not use the placeholder").
 - expert_anchor_ids: verifiers on the main analytical spine AND the decision/

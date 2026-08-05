@@ -64,17 +64,28 @@ logger = logging.getLogger("dra.file_resolver")
 #   https://docs.google.com/presentation/d/{PRES_ID}/edit
 #   gdrive://{ID}
 
+#: An account-index segment. Google inserts /u/0/, /u/1/ etc. when you are signed
+#: into more than one account, and it appears in whatever URL you copy from the
+#: address bar. It can sit in two places depending on the link type:
+#:   drive.google.com/drive/u/1/folders/ID      (folder, after /drive)
+#:   drive.google.com/u/1/file/d/ID             (file, before /file)
+#:   docs.google.com/u/1/spreadsheets/d/ID      (workspace doc)
+#: Without this the reference was rejected outright as "not a usable GDrive
+#: reference", and because a failed fetch is non-fatal the whole batch audited
+#: with NO input files — silently degrading every golden.
+_U = r'(?:u/\d+/)?'
+
 GDRIVE_FILE_PATTERN = re.compile(
-    r'drive\.google\.com/file/d/([a-zA-Z0-9_-]+)'
+    rf'drive\.google\.com/{_U}file/d/([a-zA-Z0-9_-]+)'
 )
 GDRIVE_OPEN_PATTERN = re.compile(
-    r'drive\.google\.com/open\?id=([a-zA-Z0-9_-]+)'
+    rf'drive\.google\.com/{_U}open\?id=([a-zA-Z0-9_-]+)'
 )
 GDRIVE_FOLDER_PATTERN = re.compile(
-    r'drive\.google\.com/drive/folders/([a-zA-Z0-9_-]+)'
+    rf'drive\.google\.com/{_U}drive/{_U}folders/([a-zA-Z0-9_-]+)'
 )
 GDOCS_PATTERN = re.compile(
-    r'docs\.google\.com/(document|spreadsheets|presentation)/d/([a-zA-Z0-9_-]+)'
+    rf'docs\.google\.com/{_U}(document|spreadsheets|presentation)/d/([a-zA-Z0-9_-]+)'
 )
 GDRIVE_SCHEME_PATTERN = re.compile(
     r'^gdrive://([a-zA-Z0-9_-]+)$'

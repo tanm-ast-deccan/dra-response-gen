@@ -29,7 +29,11 @@ from src.score_task import score_task
 
 SCORE_FIELDS = ["task_id", "provider", "model", "pass_index", "run_id",
                 "crux_cleared", "crux_verifier_pass_ratio", "crux_shapley_score",
-                "n_crux", "n_passed", "n_unobserved", "not_found", "error"]
+                "n_crux", "n_passed", "n_unobservable",
+                "n_all", "n_all_passed", "all_verifier_pass_ratio",
+                "n_no_frozen_target", "n_no_frozen_target_passed",
+                "scratch_fallback", "dropped_as_scratch", "golden_divergence",
+                "deliverable_truncated", "not_found", "error"]
 
 
 def load_augmented(path):
