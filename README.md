@@ -13,6 +13,11 @@ Two pipelines for building and evaluating a Deep Research Agent benchmark:
 The two connect through the benchmark: the harness generates model responses; the
 augment pipeline builds the golden packages those responses are scored against.
 
+Full flow: **`run_augment` → SME decisions → `apply_decisions` / `finalize_tasks`
+→ `build_final_csv` → `run_score`.** Sections 2–4 below cover the augment, seal,
+and score stages; section 1 covers the harness that produces the responses. An
+end-to-end diagram is at the bottom.
+
 ---
 
 ## 1. `dra_harness` — the agent harness
@@ -207,6 +212,194 @@ Three co-equal scoring metrics per response: `crux_cleared` (AND over the crux
 set), `crux_verifier_pass_ratio` (k/n), and `crux_shapley_score`. See
 [README_auditor.md](README_auditor.md) for the full flow, files, and outputs.
 
+### Selecting rows / tasks
+
+`run_augment.py` is already multi-task. With no selector it augments every row
+in the CSV; otherwise it selects by task id (repeatable, deduped per task) or by
+row number / range:
+
+```bash
+python run_augment.py --csv prompt_data.csv --out-dir output/augmented   # all rows
+python run_augment.py --csv prompt_data.csv --task tsk_123 --task tsk_456 # by task id
+python run_augment.py --csv prompt_data.csv --row 1                       # single row
+python run_augment.py --csv prompt_data.csv --from 1 --to 20 --no-html    # a range
+```
+
+| Argument | Required | What it does |
+|---|---|---|
+| `--csv` | yes | Authoring CSV of prompt packages to audit. |
+| `--out-dir` | no | Output folder. Default `output/augmented`. |
+| `--task` | no | Augment only this task id; repeatable. Overrides row selection. |
+| `--row` | no | Augment only this row number. |
+| `--from` / `--to` | no | Augment an inclusive range of row numbers. |
+| `--model` | no | Override the auditor LLM (default: built-in judge model). |
+| `--no-files` | no | Skip the Drive input-file fetch (auditor file layer off). |
+| `--no-html` | no | Skip writing `_augment.html` / `_golden.html`. |
+
+**Outputs per task:** `{task_id}_augment.json` (canonical record),
+`{task_id}_augment.html` (SME review page), `{task_id}_golden.html`, plus a
+combined `augmented_prompt_packages.csv`.
+
+---
+
+## 3. Sealing decisions and building the final CSV
+
+After augmentation, an SME opens each `_augment.html`, makes decisions, and the
+page saves a `decisions_{task_id}_{date}.json`. Those decisions are then applied
+to seal each task, and the sealed tasks are collected into a final CSV.
+
+**Sealed vs scoreable.** `apply_decisions.py` applies the SME's rulings and marks
+the package `"sealed": true`. A *sealed* task is frozen and authoritative; a
+partially decided package is refused rather than half-sealed (use `--force` to
+override). Sealed is not the same as *scoreable*: a sealed task can still be
+flagged not-scoreable (`proceedable AND not error`) if a blocking arithmetic
+error or an unresolved judgment gap remains — it is finalized but unusable for
+scoring, with a reason recorded.
+
+### 3a. `apply_decisions.py` — seal one task
+
+```bash
+python apply_decisions.py \
+    --augment  output/augmented/tsk_8695111330_augment.json \
+    --decisions ~/Downloads/decisions_tsk_8695111330_2026-08-05.json \
+    --out output/final
+```
+
+| Argument | Required | What it does |
+|---|---|---|
+| `--augment` | yes | The task's `_augment.json` from `run_augment`. |
+| `--decisions` | yes | The `decisions_{task}.json` the SME saved from the HTML. |
+| `--out` | no | Folder for `{task_id}_final.json`. Default `output/final`. |
+| `--force` | no | Apply despite an incomplete file or a run-hash mismatch. |
+
+**Output:** one sealed `{task_id}_final.json`.
+
+### 3b. `build_final_csv.py` — collect sealed tasks into a CSV
+
+Already multi-task: `--final` takes one or more `_final.json` files **or a
+directory** of them (it globs `*_final.json`).
+
+```bash
+python build_final_csv.py \
+    --csv   ./SME_data/tasks.csv \
+    --final output/final \
+    --out   output/final_tasks.csv
+```
+
+| Argument | Required | What it does |
+|---|---|---|
+| `--csv` | yes | The original authoring CSV (base columns per task). |
+| `--final` | yes | `_final.json` file(s), or a directory of them. |
+| `--out` | yes | Path of the CSV to write. |
+| `--only-sealed` | no | Write only sealed tasks; skip the rest (default keeps all rows, blank where unsealed). |
+| `--slim` | no | Also write a narrower review sheet. Default `{out}_slim.csv`. |
+
+**Output:** `final_tasks.csv` (every original column/row preserved, sealed
+artifacts written into appended columns) and a slim review sheet.
+
+### 3c. `finalize_tasks.py` — seal many tasks and build the CSV in one go
+
+`apply_decisions.py` is the only single-task stage. `finalize_tasks.py` wraps it:
+it pairs every `_augment.json` in one folder with the `decisions_*.json` in
+another (matched by the task id inside each file), seals each pair, then calls
+`build_final_csv.py` on the resulting folder. Output is **byte-identical** to
+running the two steps by hand per task.
+
+```bash
+python finalize_tasks.py \
+    --augment-dir   output/augmented \
+    --decisions-dir ./decisions \
+    --csv           ./SME_data/tasks.csv \
+    --out           output/final_tasks.csv
+```
+
+| Argument | Required | What it does |
+|---|---|---|
+| `--augment-dir` | yes | Folder of `{task_id}_augment.json` files. |
+| `--decisions-dir` | yes | Folder of `decisions_{task_id}_{date}.json` files. |
+| `--csv` | yes | Authoring CSV, passed through to the build step. |
+| `--out` | yes | Path of the final CSV to write. |
+| `--final-dir` | no | Where to place intermediate `_final.json`. Default `_final/` beside `--out`. |
+| `--slim` | no | Passed to the build step (narrower review sheet). |
+| `--only-sealed` | no | Passed to the build step (only sealed rows). |
+| `--force` | no | Apply despite incomplete/mismatched decisions (per task). |
+| `--continue-on-error` | no | Skip a task whose apply step fails instead of stopping. |
+
+Pairing is by the task id embedded in each filename; if several decision files
+exist for one task (SME re-saves), the newest by modification time wins. Tasks
+with no matching decisions file are reported as *awaiting decisions* and skipped.
+Exit code is `0` on success and `1` on failure, so a UI can detect the outcome.
+Requires `apply_decisions.py` and `build_final_csv.py` in the same folder.
+
+---
+
+## 4. `run_score.py` — score responses against sealed packages
+
+Grades harness responses against the augmented/sealed packages, in parallel, and
+ranks tasks by the three crux metrics. The `--augmented-csv` is the
+`augmented_prompt_packages.csv` from `run_augment`; `--results-json` is a path or
+glob of the harness results JSON.
+
+```bash
+python run_score.py \
+    --augmented-csv output/augmented/augmented_prompt_packages.csv \
+    --results-json 'results/*.json' \
+    --workers 6
+```
+
+| Argument | Required | What it does |
+|---|---|---|
+| `--augmented-csv` | no* | The `augmented_prompt_packages.csv` (or config default). |
+| `--results-json` | no* | Path or glob of harness results JSON. |
+| `--out-dir` | no | Where to write `scores.csv` / `task_ranking.csv`. |
+| `--workers` | no | Parallel scoring workers. |
+| `--staging-remap` | no | Rewrite a renamed staging path segment: `OLD=NEW` (default `staging=staging_1`). |
+| `--model` | no | Override the judge model for LLM-graded verifiers. |
+| `--require-both` | no | Only score tasks that succeeded in every listed results file (intersect across models). |
+| `--exclude-tasks` | no | Task ids to skip. |
+
+<sub>*Defaults come from `augment_score_config`; pass explicitly to override.</sub>
+
+**Outputs (in `--out-dir`):** `scores.csv` (one row per task/provider/pass with
+the three crux metrics) and `task_ranking.csv` (per-task mean over runs, sorted
+hardest-first).
+
+---
+
+## End-to-end sequence
+
+```
+                 authoring CSV (prompt packages)
+                          │
+          ┌───────────────┴───────────────┐
+          ▼                               ▼
+  run_augment.py                   dra_harness  (runs models on the tasks)
+  → *_augment.json                 → results_*.json  (per-turn trajectories)
+  → *_augment.html                       │
+  → augmented_prompt_packages.csv        │
+          │                              │
+   SME opens *_augment.html              │
+   → decisions_*.json                    │
+          │                              │
+   apply_decisions.py  (per task)        │
+     ── or ──                            │
+   finalize_tasks.py   (whole folder)    │
+   → *_final.json                        │
+          │                              │
+   build_final_csv.py                    │
+   (finalize_tasks runs this for you)    │
+   → final_tasks.csv (+ _slim.csv)       │
+          │                              │
+          └──────────────┬───────────────┘
+                         ▼
+                   run_score.py
+              → scores.csv, task_ranking.csv
+```
+
+The augment/seal branch builds the golden packages; the harness branch generates
+model responses. `run_score.py` joins them: sealed packages in, scored and ranked
+tasks out.
+
 ---
 
 ## Environment variables
@@ -230,6 +423,9 @@ GOOGLE_APPLICATION_CREDENTIALS=./gcp_key.json   # GDrive file downloads
 - `duckduckgo-search` (fallback web search)
 - `google-api-python-client`, `google-auth-httplib2` (GDrive downloads)
 - augment pipeline also uses `PyMuPDF`, `python-dotenv`
+- the seal/build/score stages (`apply_decisions`, `build_final_csv`,
+  `finalize_tasks`, `run_score`) add no new dependencies — `finalize_tasks.py`
+  is standard-library only and imports `apply_decisions` in-process.
 
 ## License
 
