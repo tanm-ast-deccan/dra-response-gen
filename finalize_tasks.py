@@ -46,16 +46,40 @@ def _task_id_from_json(path):
 
 
 def index_augments(augment_dir):
-    """{task_id: augment_path} for every *_augment.json in the folder."""
+    """{task_id: package_path} for every sealable package under augment_dir.
+
+    Supports BOTH layouts:
+      * N-run + adjudicate (current): {augment_dir}/{task_id}/adjudicated.json
+        (and a top-level adjudicated.json if the dir already IS a task folder)
+      * single-run (legacy):          {augment_dir}/{task_id}_augment.json
+
+    The adjudicated package is the SME-facing artifact the decisions HTML was
+    rendered from, so it is what apply_decisions must seal — not the per-run
+    *_augment.json, which is one run of several. When both are present for a task,
+    the adjudicated package wins.
+    """
     out = {}
+    # 1) legacy flat single-run augment files
     for p in sorted(glob.glob(os.path.join(augment_dir, "*_augment.json"))):
         tid = _task_id_from_json(p)
         if not tid:
-            # fall back to filename stem if the file has no task_id field
             m = re.match(r"(.+)_augment\.json$", os.path.basename(p))
             tid = m.group(1) if m else ""
         if tid:
             out[tid] = p
+    # 2) adjudicated packages — nested per-task folders, and the case where
+    #    augment_dir itself is a single task folder containing adjudicated.json
+    candidates = glob.glob(os.path.join(augment_dir, "*", "adjudicated.json"))
+    top = os.path.join(augment_dir, "adjudicated.json")
+    if os.path.isfile(top):
+        candidates.append(top)
+    for p in sorted(candidates):
+        tid = _task_id_from_json(p)
+        if not tid:
+            # infer from the containing folder name
+            tid = os.path.basename(os.path.dirname(p))
+        if tid:
+            out[tid] = p        # adjudicated wins over a legacy augment file
     return out
 
 
@@ -93,6 +117,12 @@ def run(argv=None):
     ap.add_argument("--slim", default=None,
                     help="also write a narrower review sheet here "
                          "(passed through to build_final_csv)")
+    ap.add_argument("--response-ready", default=None,
+                    help="also write a response-generation-ready CSV here: the "
+                         "corrected prompt occupies the 'prompt' column and "
+                         "drive_link is preserved, so dra_harness generates "
+                         "against the sealed task (passed through to "
+                         "build_final_csv; only scoreable tasks are included)")
     ap.add_argument("--only-sealed", action="store_true",
                     help="write only sealed tasks to the CSV (passed through)")
     ap.add_argument("--force", action="store_true",
@@ -112,7 +142,12 @@ def run(argv=None):
     augs = index_augments(args.augment_dir)
     decs = index_decisions(args.decisions_dir)
     if not augs:
-        raise SystemExit(f"ERROR: no *_augment.json found in {args.augment_dir}")
+        raise SystemExit(
+            f"ERROR: no sealable package found in {args.augment_dir}\n"
+            f"  looked for: <task_id>/adjudicated.json (N-run+adjudicate) or "
+            f"*_augment.json (single-run). Point --augment-dir at the folder that "
+            f"CONTAINS the per-task folders (e.g. output_toy_a_3), or at a single "
+            f"task folder that holds adjudicated.json.")
 
     paired = sorted(set(augs) & set(decs))
     aug_only = sorted(set(augs) - set(decs))   # awaiting SME decisions
@@ -166,6 +201,8 @@ def run(argv=None):
         cmd.append("--only-sealed")
     if args.slim:
         cmd += ["--slim", args.slim]
+    if args.response_ready:
+        cmd += ["--response-ready", args.response_ready]
     print(f"\n$ {' '.join(cmd)}")
     r = subprocess.run(cmd)
     if r.returncode != 0:

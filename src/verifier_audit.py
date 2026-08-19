@@ -58,6 +58,36 @@ _VALUE_IN_TEXT = re.compile(
     r"|[$\u20b9\u20ac\u00a3]\s?\d",
     re.IGNORECASE)
 
+#: A verifier that leans on a LIVE, unpinned value — "today's market rate", "the
+#: current index", "the latest price" — decays as the world moves and is a
+#: temporal_drift defect. Call 1 screens the ORIGINAL verifiers for this, but a
+#: split mints NEW verifier text after Call 1 has finished, so a live value that
+#: first appears in a split child would otherwise never be screened. This catches
+#: the unpinned phrasing; a value already tied to a date or a named source file
+#: (e.g. "the Jan-2026 survey rate") does not match, because the pin is present.
+_TEMPORAL_UNPINNED = re.compile(
+    r"\b(?:today'?s|current(?:ly)?|latest|prevailing|live|now|present|"
+    r"as[- ]of[- ]today|market)\b[^.]{0,40}\b(?:rate|price|index|value|"
+    r"level|wage|cost|yield|fx|exchange)\b",
+    re.IGNORECASE)
+#: If the child ALSO names a pin (a date, a year, or 'file'/'source'/'survey'/
+#: 'annexure'/'vintage'), the live phrasing is anchored and is not drift.
+_TEMPORAL_PINNED = re.compile(
+    r"\b(?:20\d{2}|q[1-4]\s*20\d{2}|dated|vintage|as[- ]of\s+\w+\s+\d|"
+    r"file|source\s+file|annexure|survey|input\s+file)\b",
+    re.IGNORECASE)
+
+
+def _child_has_unpinned_live_value(text: str) -> bool:
+    """A split child states a live value with no date/source pin.
+
+    Modular temporal re-screen: apply_splits calls this on every child so a live
+    value introduced by a split is caught at creation, closing the gap where a
+    verifier born after Call 1 escaped the only temporal screen.
+    """
+    t = text or ""
+    return bool(_TEMPORAL_UNPINNED.search(t)) and not _TEMPORAL_PINNED.search(t)
+
 SYSTEM = """\
 You are auditing whether each verifier in a benchmark is well FORMED. You are not \
 grading a response, not re-deriving the answer, and not judging whether the \
@@ -331,6 +361,7 @@ Then emit a SINGLE JSON object after </analysis>:
       "tests_step_why": "why this verifier tests that step, or why it tests no step",
       "rewrite": "the verifier rewritten in place to satisfy every property, or '' if unchanged",
       "split_into": [],
+      "_split_into_example": [{{"text": "child verifier statement", "suffix": "a", "inherits_target": true}}, {{"text": "second child statement", "suffix": "b", "inherits_target": false, "target": {{"value": 12.5, "tol": 0.1}}}}],
       "route_to_rubric": false,
       "rubric_dimension": null
     }}
@@ -356,9 +387,20 @@ Rules:
   frozen target value. Use it for wording defects: naming a fail-if condition,
   inlining a target the verifier only pointed at, replacing a positional
   reference with a semantic one.
-- "split_into" replaces a non-atomic verifier with two or more children. Give a
-  short "suffix" per child (a, b, c) and set "inherits_target" true on exactly the
-  ONE child the parent's frozen value belongs to. An empty list means no split.
+  STATE ONLY THE TESTABLE CONDITION, precisely and comprehensively, but
+  SUCCINCTLY. A verifier is a check, not an explanation: give the condition and,
+  if needed, a short "fails if X" clause — do NOT narrate the derivation, the
+  trap, or WHY a wrong answer is wrong. Aim for one clause; a rewrite over ~25
+  words is almost always carrying reasoning that belongs in the solution logic,
+  not the verifier. E.g. prefer "Required front-desk staffing = 4 FTE (fails if
+  3)." over "...= 4 FTE (ceil of the 3.333 Erlang offered load); FAIL IF reported
+  as 3, which is what omitting the round-up to a stable capacity produces."
+- "split_into" replaces a non-atomic verifier with two or more children. For
+  each child give: "text" (the child verifier's full statement, stated with the
+  same succinctness rule as a rewrite — condition only, no reasoning), a short
+  "suffix" (a, b, c), and set "inherits_target" true on exactly the ONE child the
+  parent's frozen value belongs to. An empty list means no split. Put the child's
+  statement under the key "text" — not "verifier" or "statement".
 - IF ANOTHER CHILD ALSO ASSERTS A NUMBER, give it its own "target". A child that
   asserts a value with no target cannot be scored: there is nothing to compare
   against. Observed: "Lead time applied correctly (40 days vs 10 days)" split into
@@ -588,7 +630,17 @@ def audit_verifiers(
             res.rewrites[vid] = rw
         sp = []
         for i, child in enumerate(v.get("split_into") or []):
-            txt = str((child or {}).get("text", "")).strip()
+            # The child's text has been emitted under several field names across
+            # runs — "text", "verifier", "statement" — because the schema example
+            # showed an empty list and never named the field. Accept any of them
+            # so a correctly-proposed split is not silently dropped (observed: a
+            # clean V5 "4 FTE AND wage" split came back under "verifier" and was
+            # discarded, leaving the non-atomic verifier un-split). The template
+            # now names "text" explicitly; this stays tolerant for older/variant
+            # emissions.
+            child = child or {}
+            txt = str(child.get("text") or child.get("verifier")
+                      or child.get("statement") or "").strip()
             if not txt:
                 continue
             sp.append({"suffix": str(child.get("suffix") or
@@ -623,6 +675,15 @@ def apply_rewrites(verifiers: List[dict], rewrites: Dict[str, str]) -> List[dict
     """Apply in-place rewrites. IDs are preserved, so nothing downstream shifts.
 
     Splits are deliberately NOT handled here — see the module docstring.
+
+    A "fails if <n>" clause is KEPT verbatim. An earlier version stripped numeric
+    fail-if clauses to guard against a fabricated trap value (the model once wrote
+    "fails if 1" where the real trap is 3). That was wrong twice over: a regex
+    cannot tell a fabricated number (1) from a correct one (3) — they are
+    identical text — so it also destroyed correct clauses ("= 4 FTE (fails if 3)"
+    -> "= 4 FTE ("), and it left broken syntax. A fail-if clause is legitimate and
+    useful; the real defect (an implausible trap VALUE) lives in the claims stage
+    and is a model-judgment problem, not a text-surgery one. So no stripping.
     """
     out = []
     for v in verifiers:
@@ -661,7 +722,7 @@ def apply_splits(verifiers: List[dict], splits: Dict[str, List[dict]],
             continue
         parent_target = ev.pop(vid, None)
         heir = next((c for c in children if c.get("inherits_target")), None)
-        made, targetless = [], []
+        made, targetless, temporal_unpinned = [], [], []
         for c in children:
             cid = f"{vid}{c['suffix']}"
             out.append({**v, "id": cid, "text": c["text"], "split_from": vid})
@@ -671,6 +732,10 @@ def apply_splits(verifiers: List[dict], splits: Dict[str, List[dict]],
                 ev[cid] = dict(c["target"])
             else:
                 targetless.append(cid)
+            # temporal re-screen: a child born here with a live, unpinned value
+            # never passed through Call 1, so flag it for the SME to pin at seal.
+            if _child_has_unpinned_live_value(c["text"]):
+                temporal_unpinned.append(cid)
             made.append(cid)
         log.append({"parent": vid, "children": made,
                     "target_went_to": (f"{vid}{heir['suffix']}" if heir and
@@ -680,6 +745,10 @@ def apply_splits(verifiers: List[dict], splits: Dict[str, List[dict]],
                     # a child with no target cannot be scored; structural children
                     # are legitimately targetless, a numeric one is not
                     "targetless_children": targetless,
+                    # a child carrying a live value with no date/source pin — a
+                    # temporal_drift defect created after Call 1's screen, so it
+                    # is surfaced here for the SME to pin before sealing
+                    "temporal_unpinned_children": temporal_unpinned,
                     "parent_text": v.get("text", "")[:120]})
     out.sort(key=lambda x: (_vnum(x["id"]), x["id"]))
     return out, ev, log

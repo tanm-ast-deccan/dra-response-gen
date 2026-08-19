@@ -111,6 +111,35 @@ def _f(x: str) -> Optional[float]:
         return None
 
 
+#: Relative tolerance applied to a numeric target that the verifier stated with
+#: NO explicit band. Small enough to catch a genuine value error (38 vs 42, ~10%)
+#: while absorbing rounding of a full-precision figure (3.333 vs 3.33333). An
+#: explicit band in the text always wins over this default.
+_DEFAULT_REL_TOL = 0.005  # 0.5%
+#: Absolute floor so a tiny fractional value still gets a usable band.
+_DEFAULT_ABS_FLOOR = 1e-6
+
+
+def _is_whole_number(v: Optional[float]) -> bool:
+    """A value with no meaningful fractional part (4, 42.0, -3). Whole numbers —
+    counts, headcount, FTE, clerk counts — must stay EXACT: a "4 FTE" verifier
+    should fail on 3 or 5, not tolerate 3.98–4.02. Only fractional values
+    (rates, ratios, currency with paise/cents, percentages) get a default band.
+    """
+    if v is None:
+        return False
+    return abs(v - round(v)) < 1e-9
+
+
+def _default_band_for(v: Optional[float]) -> float:
+    """Tolerance for a band-less numeric target. Zero for whole numbers (kept
+    exact, per the counting-quantity rule); a relative band for fractional ones.
+    """
+    if v is None or _is_whole_number(v):
+        return 0.0
+    return max(abs(v) * _DEFAULT_REL_TOL, _DEFAULT_ABS_FLOOR)
+
+
 def parse_target(text: str) -> dict:
     """Read one verifier's target clause.
 
@@ -209,9 +238,17 @@ def _read_one(t: str, base: dict):
         if v is not None and (m.group("neg1") or m.group("neg2")
                               or re.search(r"=\s*[^\d(]*\(\s*-", t)):
             v = -abs(v)
-        out.update(kind="numeric", value=v, tol=0.0,
+        # No band was stated. A whole-number target (counts, FTE) stays EXACT; a
+        # fractional target gets a small default relative band, so a rounded but
+        # correct figure (3.333 vs a computed 3.33333) is not scored as a miss
+        # and a genuine error (38 vs 42) still is. An explicit band, handled in
+        # the _NUM branch above, always takes precedence over this default.
+        band = _default_band_for(v)
+        out.update(kind="numeric", value=v, tol=band,
                    unit=(m.group("unit") or "").strip(), form="numeric_no_band",
-                   note="value stated with NO band — a toleranced failure")
+                   note=("value stated with NO band — default "
+                         + (f"±{band:g} applied (fractional)" if band
+                            else "exact (whole number)")))
         return out
 
     return None

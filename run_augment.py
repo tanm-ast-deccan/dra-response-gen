@@ -44,6 +44,73 @@ def _blank_new_cols(row):
     return row
 
 
+def _adjudicate_task(run_dir_base, manifest, model, no_llm=False, no_html=False):
+    """Reconcile a task's N runs (from its manifest) into one final JSON + HTML,
+    written alongside the runs. Wires the master-LLM cluster+judge to Opus unless
+    no_llm. Kept resilient: a failure here never aborts the augment batch."""
+    try:
+        from adjudicate_runs import adjudicate, render_html, build_sme_package
+    except Exception as e:                                       # noqa: BLE001
+        print(f"    !! adjudicator unavailable ({e}); runs stored, not merged")
+        return
+    run_jsons = []
+    for r in manifest.get("runs", []):
+        p = r.get("json")
+        if p and os.path.exists(p):
+            try:
+                run_jsons.append(json.load(open(p, encoding="utf-8")))
+            except Exception as e:                               # noqa: BLE001
+                print(f"    warn: could not load {p}: {e}")
+    if len(run_jsons) < 3:
+        print(f"    !! only {len(run_jsons)} usable run(s); need >=3 to "
+              f"adjudicate — skipping")
+        return
+
+    cluster = judge = None
+    if not no_llm:
+        try:
+            from src.prompt_evaluator import _call_llm, DEFAULT_JUDGE_MODEL
+
+            def _call(prompt):
+                return _call_llm(prompt, model or DEFAULT_JUDGE_MODEL,
+                                 max_tokens=4000,
+                                 system_prompt="You reconcile multiple runs of a "
+                                 "task. You only SELECT among options given; you "
+                                 "never invent.")
+            cluster = judge = _call
+        except Exception as e:                                   # noqa: BLE001
+            print(f"    warn: LLM client unavailable ({e}); deterministic "
+                  f"adjudication")
+
+    final, adj = None, None
+    if cluster is not None:
+        try:
+            final, adj = adjudicate(run_jsons, llm_cluster=cluster,
+                                    llm_judge=judge)
+        except Exception as e:                                   # noqa: BLE001
+            print(f"    warn: LLM adjudication failed ({e}); falling back to "
+                  f"deterministic")
+            final, adj = None, None
+    if final is None:
+        # deterministic: keyword clustering + majority-wins, fallbacks logged
+        final, adj = adjudicate(run_jsons, llm_cluster=None, llm_judge=None)
+    # Build the SME package ONCE (Option-A1 representative-run assembly with the
+    # value overrides applied and structure re-derived). Save THAT as JSON and
+    # render THAT as HTML, so adjudicated.json and adjudicated.html describe the
+    # same object — with the full dag / crux / shapley, not the thin merge.
+    pkg = build_sme_package(final, adj, run_jsons=run_jsons)
+    fjson = os.path.join(run_dir_base, "adjudicated.json")
+    json.dump(pkg, open(fjson, "w", encoding="utf-8"),
+              ensure_ascii=False, indent=2, default=str)
+    if not no_html:
+        open(os.path.join(run_dir_base, "adjudicated.html"),
+             "w", encoding="utf-8").write(
+                 render_html(final, adj, run_jsons=run_jsons, pkg=pkg))
+    print(f"    => adjudicated {len(run_jsons)} runs -> adjudicated.json"
+          f"{'' if no_html else ' + .html'} | verdict "
+          f"{final.get('audit_verdict')} | {len(adj.overrides)} override(s)")
+
+
 def load_rows(path):
     """Banner-row tolerant; see src.auditor.read_task_csv."""
     return read_task_csv(path)
@@ -64,7 +131,20 @@ def main():
     ap.add_argument("--no-files", action="store_true",
                     help="skip Drive input-file fetch (auditor provenance layer off)")
     ap.add_argument("--no-html", action="store_true")
+    ap.add_argument("--runs", type=int, default=1,
+                    help="run the auditor/augmenter N times per task (default 1). "
+                         "With N>1, each run's JSON+HTML is written under "
+                         "{out_dir}/{task_id}/run_{k}/ and a runs_manifest.json is "
+                         "written per task listing the run JSONs, so the "
+                         "adjudicator can consume them downstream.")
+    ap.add_argument("--adjudicate", action="store_true",
+                    help="after N runs, immediately adjudicate them into "
+                         "{out_dir}/{task_id}/adjudicated.json + .html "
+                         "(requires --runs >= 3).")
     args = ap.parse_args()
+
+    if args.adjudicate and args.runs < 3:
+        ap.error("--adjudicate needs --runs >= 3 (default 5 is typical)")
 
     headers, rows = load_rows(args.csv)
     try:
@@ -162,6 +242,68 @@ def main():
             row["not_scoreable_reason"] = f"augment crashed: {e}"
             row["augment_error"] = str(e)
             out_rows.append(row); continue
+
+        # ---- N-RUN WRAPPER --------------------------------------------------
+        # The auditor/augmenter are LLM calls and vary run to run. When --runs>1,
+        # produce N independent runs and store them so the adjudicator can
+        # reconcile them. The fetch above is deterministic, so it is done ONCE and
+        # its inputs reused for every run; only the augment call repeats.
+        # `rd` from the first call above is reused as run 1 (no wasted call).
+        if args.runs > 1:
+            run_dir_base = os.path.join(args.out_dir, task_id)
+            os.makedirs(run_dir_base, exist_ok=True)
+            manifest = {"task_id": task_id, "n_runs": args.runs, "runs": []}
+            for k in range(1, args.runs + 1):
+                if k == 1:
+                    rd_k = rd            # reuse the run already computed
+                else:
+                    try:
+                        res_k = augment_task(
+                            row, hmap, input_files_text=files_text,
+                            input_corpus=corpus, input_files_names=files_names,
+                            model_name=model, skipped_inputs=skipped)
+                        rd_k = res_k.to_dict()
+                    except Exception as e:
+                        print(f"    run {k}/{args.runs} FAILED: {e}")
+                        manifest["runs"].append(
+                            {"run": k, "error": str(e), "json": None})
+                        continue
+                rdir = os.path.join(run_dir_base, f"run_{k}")
+                os.makedirs(rdir, exist_ok=True)
+                jpath = os.path.join(rdir, f"{task_id}_run{k}_augment.json")
+                try:
+                    json.dump(rd_k, open(jpath, "w", encoding="utf-8"),
+                              ensure_ascii=False, indent=2)
+                except Exception as e:
+                    print(f"    warn: run {k} json write failed: {e}")
+                    jpath = None
+                if not args.no_html and jpath:
+                    try:
+                        write_augment_report(
+                            rd_k, os.path.join(rdir, f"{task_id}_run{k}_augment.html"))
+                        write_golden_report(
+                            rd_k, os.path.join(rdir, f"{task_id}_run{k}_golden.html"))
+                    except Exception as e:
+                        print(f"    warn: run {k} html write failed: {e}")
+                manifest["runs"].append(
+                    {"run": k, "json": jpath,
+                     "verdict": rd_k.get("audit_verdict"),
+                     "scoreable": rd_k.get("scoreable"),
+                     "gate_ok": bool((rd_k.get("gate") or {}).get("passed"))})
+                print(f"    run {k}/{args.runs}: {rd_k.get('audit_verdict')} "
+                      f"| crux {len(rd_k.get('crux_ids', []))}")
+            # per-task manifest the adjudicator consumes
+            mpath = os.path.join(run_dir_base, "runs_manifest.json")
+            json.dump(manifest, open(mpath, "w", encoding="utf-8"),
+                      ensure_ascii=False, indent=2)
+            print(f"    -> {args.runs} runs stored under {run_dir_base}/ "
+                  f"(manifest: runs_manifest.json)")
+
+            if args.adjudicate:
+                _adjudicate_task(run_dir_base, manifest, model,
+                                 no_llm=False, no_html=args.no_html)
+            # fall through: the first run still fills the CSV row below, so the
+            # augmented CSV remains a valid single-run artifact alongside the runs.
 
         # permanent safeguard: lossless per-task JSON so the CSV can always be
         # rebuilt (via rebuild_csv.py) without re-calling Opus.

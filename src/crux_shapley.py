@@ -123,6 +123,8 @@ def select_crux(
     expert_anchor_ids: Optional[Iterable[str]] = None,
     expected_value_ids: Optional[Iterable[str]] = None,
     final_answer_ids: Optional[Iterable[str]] = None,
+    include_immediate_parents: bool = False,
+    excluded_ids: Optional[Iterable[str]] = None,
 ) -> CruxSelection:
     """Deterministic crux selection.
 
@@ -145,6 +147,7 @@ def select_crux(
     """
     ids = [v["id"] for v in all_vs]
     by_id = {v["id"]: v for v in all_vs}
+    excluded = {i for i in (excluded_ids or []) if i in by_id}
 
     # --- trap-side anchors (Lazy-AI test) ---
     if trap_anchor_ids is None:
@@ -198,6 +201,22 @@ def select_crux(
     direct = set(anchors)
     if final_answer_ids is not None:
         direct |= {i for i in final_answer_ids if i in by_id}
+    # SEAL-ONLY one-hop widening: add the immediate parents (direct DAG
+    # dependencies) of each directly-selected crux verifier. Exactly one hop —
+    # not transitive — so the crux grows to the verifiers the core answers
+    # DIRECTLY rest on, without ballooning to the whole connected component.
+    if include_immediate_parents:
+        parents = set()
+        for i in list(direct):
+            for p in dag.get(i, []):
+                if p in by_id:
+                    parents.add(p)
+        direct |= parents
+    else:
+        parents = set()
+    # SEAL-ONLY exclusion: remove dropped duplicates / rejected verifiers so the
+    # crux never double-counts a quantity (e.g. the dropped split child V5a).
+    direct -= excluded
     reachable_ids = [i for i in ids if i in direct]
 
     # --- expected-value filter ---
@@ -222,7 +241,13 @@ def select_crux(
     dropped: List[str] = []
     if expected_value_ids is not None:
         ev = set(expected_value_ids)
-        keep_without_target = set(anchors) | set(final_answer_ids or ())
+        # anchors, final-answer verifiers, AND immediate parents are crux by
+        # role: a judgment/decision parent (e.g. "how many clerks required") has
+        # no number to freeze but is graded against its text, so it is kept even
+        # without a frozen value. Only a verifier that qualified some OTHER way
+        # and lacks a target is dropped as unscoreable.
+        keep_without_target = (set(anchors) | set(final_answer_ids or ())
+                               | parents)
         crux_ids = [i for i in reachable_ids
                     if i in ev or i in keep_without_target]
         dropped = [i for i in reachable_ids
@@ -235,7 +260,10 @@ def select_crux(
         anchors_trap=sorted(set(trap)),
         anchors_expert=sorted(set(expert)),
         dropped_no_expected=dropped,
-        method=("direct: sanity-check anchors + final-answer verifiers, "
+        method=("direct+parents: sanity-check anchors + final-answer + immediate "
+                "parents, minus excluded, filtered to frozen-value verifiers"
+                if include_immediate_parents else
+                "direct: sanity-check anchors + final-answer verifiers, "
                 "filtered to verifiers with a frozen expected value"),
     )
 
@@ -243,6 +271,49 @@ def select_crux(
 # ---------------------------------------------------------------------------
 # Shapley over the crux set
 # ---------------------------------------------------------------------------
+
+def crux_subgraph(dag: Dict[str, List[str]],
+                  crux_ids: List[str]) -> Dict[str, List[str]]:
+    """The DAG induced on the crux verifiers only. An edge u->p is kept when both
+    are crux; when a crux node's parent is NOT crux, we lift the edge to that
+    parent's nearest crux ancestors, so the crux subgraph preserves reachability
+    among crux nodes even where intermediate non-crux verifiers are skipped."""
+    crux = set(crux_ids)
+    anc = ancestors(dag)
+    sub: Dict[str, List[str]] = {c: [] for c in crux_ids}
+    for c in crux_ids:
+        parents = set()
+        for p in dag.get(c, []):
+            if p in crux:
+                parents.add(p)
+            else:
+                parents |= {a for a in anc.get(p, set()) if a in crux}
+        sub[c] = sorted(parents)
+    return sub
+
+
+def full_dag_shapley(all_vs: List[dict], dag: Dict[str, List[str]],
+                     base_weights: Dict[str, float],
+                     iters: int = 60000, seed: int = 12345) -> Dict[str, float]:
+    """Shapley value of EVERY verifier over the full DAG (all verifiers are
+    players, no fixed context) — the whole-set importance distribution,
+    renormalized to sum to 1.0."""
+    all_ids = [v["id"] for v in all_vs]
+    return crux_shapley(all_vs, dag, base_weights, all_ids, iters=iters, seed=seed)
+
+
+def crux_dag_shapley(all_vs: List[dict], dag: Dict[str, List[str]],
+                     base_weights: Dict[str, float], crux_ids: List[str],
+                     iters: int = 60000, seed: int = 12345) -> Dict[str, float]:
+    """Shapley within the CRUX SUBGRAPH: the induced DAG on crux verifiers, with
+    the crux as the players and no external context. Isolates each crux verifier's
+    marginal against the other crux verifiers alone (vs crux_shapley, which holds
+    the non-crux set as fixed context)."""
+    sub = crux_subgraph(dag, crux_ids)
+    crux_vs = [v for v in all_vs if v["id"] in set(crux_ids)]
+    return crux_shapley(crux_vs, sub, base_weights, crux_ids,
+                        iters=iters, seed=seed)
+
 
 def _coalition_value(S: Set[str], base: Dict[str, float], anc: Dict[str, Set[str]]) -> float:
     """Sum of base weights of verifiers whose ALL ancestors are also present."""

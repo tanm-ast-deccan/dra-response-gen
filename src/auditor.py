@@ -38,6 +38,11 @@ from src.arithmetic_verifier import (
 )
 from src.verifier_parser import parse_verifiers
 from src.verifier_qc import run_verifier_qc, qc_summary
+from src.verifier_grammar import derive_expected_values
+from src.derive_dag import (claim_graph, graph_health, map_verifiers_to_steps,
+                            step_coverage)
+from src.verifier_audit import (audit_verifiers, apply_rewrites, apply_splits,
+                                format_verifiers_ids)
 
 logger = logging.getLogger("dra.auditor")
 
@@ -159,6 +164,20 @@ def build_header_map(headers: List[str]) -> Dict[str, str]:
     return resolved
 
 
+def _parse_v_lines(block: str) -> List[dict]:
+    """Parse a 'V<n>[a-z]: text' block into [{'id','text'}], preserving SUFFIXED
+    ids (V5a, V5b). Unlike verifier_parser.parse_verifiers, which extracts an
+    integer index and would turn 'V5a: ...' into id 'V5' with 'a:' leaking into
+    the text, this keys on the full id token so split children survive a re-parse.
+    """
+    out = []
+    for line in (block or "").splitlines():
+        m = re.match(r"\s*(V\d+[a-z]?)\s*:\s*(.*)", line)
+        if m:
+            out.append({"id": m.group(1), "text": m.group(2).strip()})
+    return out
+
+
 def get_field(row: dict, header_map: Dict[str, str], canon: str, default: str = "") -> str:
     col = header_map.get(canon)
     if col is None:
@@ -222,12 +241,35 @@ class AuditResult:
     corrected_claim_verdicts: List[dict] = field(default_factory=list)
     judgment_steps: List[dict] = field(default_factory=list)
     corrected_arithmetic_summary: dict = field(default_factory=dict)
+
+    # --- finalized verifier set (1b: the property audit now runs HERE, so the
+    #     auditor returns a verifier set that is already atomic/split, with
+    #     targets frozen from the verifier TEXT and the trajectory derived from
+    #     the corrected claims. augment_task consumes this instead of authoring
+    #     it, which removes the Call-2 -> augment -> property-audit cycle). All
+    #     additive: no existing field changes, so audit_report / run_audit_check
+    #     keep working unchanged.
+    final_verifiers_text: str = ""            # canonical 'V<n>: ...' after splits
+    expected_values: Dict[str, dict] = field(default_factory=dict)
+    step_graph: Dict[str, list] = field(default_factory=dict)
+    step_nodes: Dict[str, dict] = field(default_factory=dict)
+    step_graph_health: dict = field(default_factory=dict)
+    verifier_to_step: Dict[str, str] = field(default_factory=dict)
+    verifier_mapping_report: dict = field(default_factory=dict)
+    step_coverage_report: dict = field(default_factory=dict)
+    verifier_audit: dict = field(default_factory=dict)
+    verifier_splits_applied: List[dict] = field(default_factory=list)
+    verifier_rewrites_applied: List[str] = field(default_factory=list)
+    target_grammar_problems: List[dict] = field(default_factory=list)
     #: Deterministic gate over the FINAL derivation. Distinct from `proceedable`,
     #: which was the model's own verdict and which nothing enforced.
     gate: dict = field(default_factory=dict)
     #: Claims call 2 emitted without an operation or without input values. These
     #: are unverifiable for a reason that has nothing to do with the golden.
     malformed_claims: List[dict] = field(default_factory=list)
+    #: Outcome of the one-shot repair pass for malformed claims (empty operation
+    #: / valueless input). Empty when nothing needed repair.
+    malformed_repair_note: str = ""
     findings_note: str = ""
     changes: List[dict] = field(default_factory=list)
     findings: List[dict] = field(default_factory=list)
@@ -345,7 +387,15 @@ def arithmetic_gate(verdicts, input_files_supplied: bool = True,
     only when input files were actually supplied — otherwise every claim on an
     unaudited-inputs task would be unverifiable and the gate would refuse
     everything.
+
+    A claim that is UNVERIFIABLE *because its own emission is malformed* (empty
+    operation, or an input with no value) is NOT a golden-reconciliation failure —
+    it is a pipeline/emission fault that says nothing about whether the golden is
+    correct. Such claims are excluded from `blocking` and surfaced under
+    `malformed_claims` instead, so an empty-operation claim (e.g. a round-up step
+    the model left blank) no longer masquerades as a broken golden.
     """
+    malformed_ids = {str(m.get("id")) for m in (malformed_claims or [])}
     blocking, warning = [], []
     for v in verdicts or []:
         st = getattr(v, "status", None) or (v.get("status") if isinstance(v, dict) else "")
@@ -362,13 +412,24 @@ def arithmetic_gate(verdicts, input_files_supplied: bool = True,
                              "detail": (getattr(v, "detail", None)
                                         or (v.get("detail") if isinstance(v, dict) else ""))})
         elif st == "UNVERIFIABLE":
-            entry = {"id": getattr(v, "id", None) or v.get("id"), "status": st,
+            cid = getattr(v, "id", None) or v.get("id")
+            entry = {"id": cid, "status": st,
                      "label": getattr(v, "label", None) or v.get("label", "")}
+            # a malformed emission (empty operation / valueless input) is a
+            # pipeline fault, not a golden fault — do not block on it
+            if str(cid) in malformed_ids:
+                continue
             (blocking if input_files_supplied else warning).append(entry)
     return {
-        "passed": bool(derivation_available) and not blocking,
+        # A malformed emission does not reconcile the derivation either, but it
+        # is a REPAIRABLE pipeline fault, not a broken golden. It fails the gate
+        # (we cannot verify a step with no operation) but is reported distinctly
+        # so callers can retry the emission rather than reject the task.
+        "passed": (bool(derivation_available) and not blocking
+                   and not malformed_claims),
         "blocking": blocking,
         "warnings": warning,
+        "malformed_blocking": bool(malformed_claims),
         "n_claims": len(verdicts or []),
         # If call 2 returned no corrected claims there is no derivation to
         # judge. Running the gate over the pre-correction claims instead would
@@ -378,15 +439,17 @@ def arithmetic_gate(verdicts, input_files_supplied: bool = True,
         "derivation_available": derivation_available,
         "malformed_claims": list(malformed_claims or []),
         "reason": (
-            "" if (derivation_available and not blocking) else
+            "" if (derivation_available and not blocking and not malformed_claims)
+            else
             ("the derivation could not be rebuilt: call 2 returned no "
              "corrected claims, so there is nothing to check"
              if not derivation_available else
              (f"call 2 emitted {len(malformed_claims)} claim(s) with no "
               f"operation or no input values ("
               + ", ".join(str(m.get("id")) for m in malformed_claims)
-              + ") — the emission is incomplete, which says nothing about "
-                "whether the golden is correct"
+              + ") — the emission is incomplete (a pipeline fault, repairable by "
+                "re-emitting the operation), which says nothing about whether the "
+                "golden is correct"
               if malformed_claims else
               f"{len(blocking)} claim(s) do not reconcile: "
               + ", ".join(f"{b['id']}({b['status']})" for b in blocking)))),
@@ -413,10 +476,8 @@ def audit_verifier_changes(original_text: str, corrected_text: str,
     if not (corrected_text or "").strip():
         return {"corrected": False, "note": "no corrected verifier block emitted"}
 
-    before = {f"V{r.index}": r.text.strip()
-              for r in (parse_verifiers(original_text).records or [])}
-    after = {f"V{r.index}": r.text.strip()
-             for r in (parse_verifiers(corrected_text).records or [])}
+    before = {v["id"]: v["text"] for v in _parse_v_lines(original_text)}
+    after = {v["id"]: v["text"] for v in _parse_v_lines(corrected_text)}
 
     changed = sorted(k for k in before.keys() & after.keys()
                      if before[k] != after[k])
@@ -463,6 +524,7 @@ def audit_task(
     model_name: str = DEFAULT_JUDGE_MODEL,
     max_tokens: int = 8000,
     skipped_inputs: Optional[List[str]] = None,
+    run_verifier_audit: bool = True,
 ) -> AuditResult:
     """Run the two-call audit on one task row. input_files_text is the extracted
     text of the model-facing input files (e.g. from gdrive_fetcher); pass "" if
@@ -621,6 +683,11 @@ def audit_task(
             "Task audited SOUND. All load-bearing figures recomputed and confirmed; "
             "cognitive trap valid; no answer leakage or unpinned time-sensitive values."
         )
+        # Even a SOUND task needs its verifier set made atomic and its targets
+        # frozen before augment; call 2 was skipped, so finalize over the ORIGINAL
+        # verifiers and the call-1 claims (which are the unchanged derivation).
+        if run_verifier_audit:
+            _finalize_verifier_set(result, verifiers_text, model_name)
         return result
 
     # --- Stage 4: corrections grounded in code results (call 2) ----------
@@ -689,6 +756,8 @@ def audit_task(
     # Observed cause: the model read source_type="file" as "code will look this
     # up", omitted every value, and eight claims came back unverifiable. Naming
     # this separately stops a schema misread being reported as a broken task.
+    _NONARITH = {"non_arithmetic", "nonarithmetic", "not_arithmetic", "formula",
+                 "source_file", "llm_judgment", "judgment", "external"}
     result.malformed_claims = [
         {"id": c.get("id"), "label": c.get("label", ""),
          "missing": ([] if str(c.get("operation") or "").strip() else ["operation"])
@@ -696,8 +765,38 @@ def audit_task(
                        if any((i or {}).get("value") is None
                               for i in (c.get("inputs") or [])) else [])}
         for c in corrected_raw
-        if not str(c.get("operation") or "").strip()
-        or any((i or {}).get("value") is None for i in (c.get("inputs") or []))]
+        # a claim that declares itself non-arithmetic legitimately has no
+        # operation — that is not a malformed slip, so do not flag or repair it
+        if str(c.get("source_of_verification") or "").lower() not in _NONARITH
+        and (not str(c.get("operation") or "").strip()
+             or any((i or {}).get("value") is None for i in (c.get("inputs") or [])))]
+
+    # REPAIR PASS. A malformed claim (empty operation, or an input with no value)
+    # is a model slip, not a broken golden, and it varies run to run — so instead
+    # of letting it fail the gate, ask the model ONCE to fill in just those
+    # claims. Bounded (one retry), targeted (only the malformed ids), and it
+    # leaves everything else untouched. If the repair still comes back malformed,
+    # the gate reports it as a pipeline fault (see arithmetic_gate) rather than a
+    # golden-reconciliation failure.
+    if corrected_raw and result.malformed_claims:
+        repaired, repair_note = _repair_malformed_claims(
+            corrected_raw, result.malformed_claims, task_id, model_name,
+            max_tokens)
+        result.malformed_repair_note = repair_note
+        if repaired is not None:
+            corrected_raw = repaired
+            # recompute which (if any) are STILL malformed after the repair
+            result.malformed_claims = [
+                {"id": c.get("id"), "label": c.get("label", ""),
+                 "missing": ([] if str(c.get("operation") or "").strip()
+                             else ["operation"])
+                            + (["input values"]
+                               if any((i or {}).get("value") is None
+                                      for i in (c.get("inputs") or [])) else [])}
+                for c in corrected_raw
+                if not str(c.get("operation") or "").strip()
+                or any((i or {}).get("value") is None
+                       for i in (c.get("inputs") or []))]
 
     if corrected_raw:
         cclaims = [ArithmeticClaim.from_dict(c) for c in corrected_raw]
@@ -734,7 +833,117 @@ def audit_task(
     result.proceedable = (result.verdict in PROCEEDABLE
                           and result.gate.get("passed", True))
     result.model_used = model_name
+
+    # --- Stage 5 (1b): finalize the verifier set INSIDE the auditor -----------
+    # The property audit needs only the trajectory (corrected claims + judgment
+    # steps) and the verifier text + text-derived targets — all Call-2 output, no
+    # augment. Running it here means the auditor returns an ALREADY-atomic,
+    # already-split verifier set with frozen targets, so augment authors the
+    # golden over a final set and can no longer be forced to create verifiers
+    # after the fact. This removes the Call-2 -> augment -> property-audit cycle.
+    #
+    # Gate on the ARITHMETIC reconciling, NOT on the verdict being proceedable: a
+    # SALVAGEABLE or even BROKEN task still needs its verifiers made atomic and
+    # split so the SME reviews the real verifier structure. Skipping the split on
+    # a broken task (an earlier 1b draft did, via `proceedable`) hid the split
+    # from exactly the tasks a reviewer most needs to see it on. What the
+    # property audit cannot run without is a derivation to map against, which is
+    # what the arithmetic gate establishes.
+    gate_ok = (result.gate or {}).get("passed", True) if result.gate else True
+    if run_verifier_audit and gate_ok:
+        _finalize_verifier_set(result, verifiers_text, model_name)
+
     return result
+
+
+def _finalize_verifier_set(result: "AuditResult", original_verifiers_text: str,
+                           model_name: str) -> None:
+    """Derive the trajectory + targets from Call-2 output, run the property
+    audit, and apply its splits/rewrites — all on the AuditResult, in place.
+
+    Everything here is a function of Call-2 output only (corrected claims,
+    judgment steps, corrected verifier text). No augment dependency, which is the
+    whole point: the verifier set is finalized before augment runs.
+    """
+    # the verifier text to finalize: prefer call 2's corrected block, else original
+    vtext = (result.corrected_verifiers or "").strip() or original_verifiers_text
+    # Parse with a suffix-aware reader: if the corrected block ever carries a
+    # suffixed id (V5a) — e.g. a re-augment of an already-split task — parse_verifiers
+    # would collapse it to V5 with "a:" leaking into the text. _parse_v_lines keys
+    # on the full "V\d+[a-z]?" id so suffixes survive. (The split that CREATES
+    # suffixes runs later in this function; this guards the input side.)
+    all_vs = _parse_v_lines(vtext)
+    if not all_vs:
+        return
+
+    # trajectory from the corrected derivation (pure). On a SOUND task call 2 was
+    # skipped, so corrected_claim_verdicts is empty; fall back to the call-1
+    # claims, which for a SOUND task ARE the (unchanged) derivation.
+    claim_source = (result.corrected_claim_verdicts
+                    or result.claim_verdicts or [])
+    step_graph, step_nodes = claim_graph(claim_source, result.judgment_steps)
+    result.step_graph = step_graph
+    result.step_nodes = step_nodes
+    result.step_graph_health = graph_health(step_graph, step_nodes)
+
+    # targets frozen from the verifier TEXT (authoritative; augment only adds
+    # unit/source metadata later)
+    derived, grammar_problems = derive_expected_values(
+        format_verifiers_ids(all_vs))
+    result.target_grammar_problems = grammar_problems
+    ev = dict(derived)
+
+    if not step_graph:
+        # no trajectory to map against; still hand back the parsed set + targets
+        result.final_verifiers_text = format_verifiers_ids(all_vs)
+        result.expected_values = ev
+        return
+
+    # provisional mapping + coverage the property audit reads as context
+    vmap = map_verifiers_to_steps(
+        ev, {v["id"]: v.get("text", "") for v in all_vs}, step_nodes)
+    frozen_map = dict(vmap.verifier_to_step)
+    mapping_report = {
+        "n_mapped": len(frozen_map), "n_verifiers": len(all_vs),
+        "unmatched": vmap.unmatched, "ambiguous": vmap.ambiguous,
+        "near_misses": vmap.near_misses, "detail": vmap.detail}
+    coverage = step_coverage(step_nodes, step_graph, frozen_map)
+
+    # the property audit (atomicity / splits / rewrites)
+    va = audit_verifiers(
+        task_id=result.task_id, verifiers=all_vs, expected_values=ev,
+        step_nodes=step_nodes, solution_logic=result.corrected_solution_logic,
+        sanity_check=result.corrected_sanity_check,
+        mapping_report=mapping_report, coverage=coverage,
+        verifier_to_step=frozen_map, model=model_name)
+    result.verifier_audit = va.to_dict()
+    if not va.error:
+        if va.rewrites:
+            all_vs = apply_rewrites(all_vs, va.rewrites)
+            result.verifier_rewrites_applied = sorted(va.rewrites)
+        if va.splits:
+            all_vs, ev, split_log = apply_splits(all_vs, va.splits, ev)
+            result.verifier_splits_applied = split_log
+        valid = {v["id"] for v in all_vs}
+        ev = {k: v for k, v in ev.items() if k in valid}
+        # re-map after splits: children are new verifiers
+        vmap = map_verifiers_to_steps(
+            ev, {v["id"]: v.get("text", "") for v in all_vs}, step_nodes)
+        frozen_map = dict(vmap.verifier_to_step)
+        for vid, sid in va.tests_step.items():
+            if vid in valid:
+                frozen_map.setdefault(vid, sid)
+        mapping_report = {
+            "n_mapped": len(frozen_map), "n_verifiers": len(all_vs),
+            "unmatched": vmap.unmatched, "ambiguous": vmap.ambiguous,
+            "near_misses": vmap.near_misses, "detail": vmap.detail}
+        coverage = step_coverage(step_nodes, step_graph, frozen_map)
+
+    result.final_verifiers_text = format_verifiers_ids(all_vs)
+    result.expected_values = ev
+    result.verifier_to_step = frozen_map
+    result.verifier_mapping_report = mapping_report
+    result.step_coverage_report = coverage
 
 
 def _format_arithmetic_for_prompt(verdicts) -> str:
@@ -751,3 +960,58 @@ def _format_arithmetic_for_prompt(verdicts) -> str:
             f"    {v.detail}"
         )
     return "\n".join(lines)
+
+def _repair_malformed_claims(corrected_raw, malformed, task_id, model_name,
+                             max_tokens):
+    """One-shot targeted repair for malformed claims.
+
+    A malformed claim (empty `operation`, or an input whose `value` is null) is a
+    model slip that varies run to run. Rather than let it fail the gate, hand the
+    model back JUST those claims and ask it to fill in the missing operation /
+    values, keeping every id and every already-present field. Returns
+    (repaired_claims, note): repaired_claims is the full corrected_raw list with
+    the malformed entries replaced, or None if the repair call failed to parse.
+
+    Bounded to a single call. If the repaired claims are still malformed, the
+    caller re-flags them and the gate reports a pipeline fault (not a broken
+    golden), so this never loops and never silently ships an unverifiable step.
+    """
+    bad_ids = [str(m.get("id")) for m in malformed]
+    bad_claims = [c for c in corrected_raw if str(c.get("id")) in bad_ids]
+    if not bad_claims:
+        return None, "no malformed claims to repair"
+
+    prompt = (
+        "One or more arithmetic claims you emitted are incomplete and cannot be "
+        "verified. For EACH claim below, supply the missing field(s) WITHOUT "
+        "changing its id, label, inputs that already have values, or intended "
+        "result:\n"
+        "- an empty \"operation\" must become the explicit expression that "
+        "produces the claimed result from the inputs (e.g. \"ceil(offered_load)\", "
+        "\"a / b\"). Whitelisted functions: sqrt abs min max round ceil floor sum "
+        "pow log exp median mean. \"^\" means exponent.\n"
+        "- an input with \"value\": null must be given its actual number.\n\n"
+        "CLAIMS TO REPAIR:\n"
+        + json.dumps(bad_claims, indent=2, ensure_ascii=False)
+        + "\n\nOutput ONLY a JSON object: "
+          "{\"repaired_claims\": [ ...the same claims, now complete... ]}. "
+          "Emit every claim id shown above, and nothing else."
+    )
+    try:
+        raw = _call_llm(prompt, model_name,
+                        max_tokens=max(4000, min(max_tokens, 16000)),
+                        system_prompt=AUDITOR_SYSTEM_PROMPT)
+    except Exception as e:                                        # noqa: BLE001
+        return None, f"repair call failed: {e}"
+
+    obj = _repair_and_parse_json(raw, task_id)
+    if not obj or "repaired_claims" not in obj:
+        return None, "repair call returned unparseable JSON"
+
+    fixed = {str(c.get("id")): c for c in (obj.get("repaired_claims") or [])
+             if c.get("id")}
+    # splice the repaired claims back into the full list, preserving order and
+    # leaving the well-formed claims untouched
+    out = [fixed.get(str(c.get("id")), c) for c in corrected_raw]
+    n = sum(1 for cid in bad_ids if cid in fixed)
+    return out, f"repaired {n}/{len(bad_ids)} malformed claim(s): {bad_ids}"

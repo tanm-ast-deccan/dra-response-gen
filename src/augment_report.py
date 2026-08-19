@@ -10,6 +10,7 @@ Both are self-contained, dependency-free HTML for SME eyeballing.
 
 from __future__ import annotations
 import html
+import re
 from typing import Dict
 
 
@@ -135,6 +136,50 @@ DECISION_CSS = """
 """
 
 
+def _step_index(res: dict) -> dict:
+    """Map every step id (claim or judgment) to its content, so a gap on that step
+    can be turned into an authored verifier suggestion."""
+    idx = {}
+    for c in res.get("corrected_claim_verdicts", []):
+        idx[str(c.get("id"))] = {
+            "kind": "claim", "label": c.get("label") or "",
+            "value": c.get("recomputed"),
+            "sov": c.get("source_of_verification")}
+    for j in res.get("judgment_steps", []):
+        idx[str(j.get("id"))] = {
+            "kind": "judgment",
+            "label": j.get("question") or j.get("label") or "",
+            "value": j.get("expected") if j.get("expected") is not None
+            else j.get("answer")}
+    return idx
+
+
+def _author_gap_verifier(step_id: str, step: dict) -> str:
+    """Author a suggested verifier for a load-bearing step that no verifier
+    watches, so the SME can Accept/Reject/Something-else rather than write one from
+    scratch. Deterministic and content-derived — it phrases a check of exactly
+    what the step computes or decides. A claim with a numeric value becomes an
+    equality check on that value; a judgment becomes a decision check. This is a
+    SUGGESTION (marked as such), not an applied change."""
+    label = str(step.get("label") or "").strip() or step_id
+    if step.get("kind") == "claim" and step.get("value") is not None:
+        v = step["value"]
+        try:
+            fv = float(v)
+            vs = str(int(fv)) if fv == int(fv) else f"{fv:.4g}"
+        except (TypeError, ValueError):
+            vs = str(v)
+        return (f"The response computes {label} = {vs} "
+                f"(within tolerance). FAIL IF absent or a different value.")
+    if step.get("kind") == "judgment":
+        return (f"The response explicitly resolves: {label} — with the "
+                f"conclusion the solution logic reaches. FAIL IF the step is "
+                f"skipped or decided the other way.")
+    # claim without a numeric value (string/decision claim)
+    return (f"The response states {label} consistent with the solution logic. "
+            f"FAIL IF absent or contradictory.")
+
+
 def _decision_items(res: dict):
     """Everything a human must rule on, as uniform cards.
 
@@ -146,9 +191,37 @@ def _decision_items(res: dict):
       rewrite  — a verifier reworded in place by the property audit
       split    — a verifier divided into children
       gap      — a proposed new verifier for an unwatched step
+      dedupe   — two+ verifiers assert the same quantity; the audit recommends
+                 keeping one and dropping the rest. Detected but, before this,
+                 only DISPLAYED — so a redundant (non-MECE) verifier still shipped.
+                 Now an actionable item: accept to drop the restated verifier(s).
     """
     items = []
+    # verifier id -> text, from the canonical set; used by several item kinds
+    vtext_map = {}
+    for _line in (res.get("augmented_verifiers_text") or "").splitlines():
+        _m = re.match(r"\s*(V\d+[a-z]?)\s*:\s*(.*)", _line)
+        if _m:
+            vtext_map[_m.group(1)] = _m.group(2).strip()
+    # Verifiers the property audit REWROTE supersede any earlier Call-2 change to
+    # the same verifier text — otherwise the SME sees two decisions for one
+    # verifier (a "change" and a "rewrite"), each proposing its own wording. The
+    # rewrite is later and wins, so the change item for that verifier is dropped.
+    va = res.get("verifier_audit") or {}
+    rewritten_vids = {v.get("id") for v in (va.get("verifiers") or [])
+                      if (v.get("rewrite") or "").strip()}
+
+    def _change_targets_rewritten_verifier(c):
+        if str(c.get("artifact", "")).lower() != "verifiers":
+            return False
+        import re as _re
+        loc = str(c.get("location", "")) + " " + str(c.get("old", ""))
+        return any(vid in _re.findall(r"\bV\d+[a-z]?\b", loc)
+                   for vid in rewritten_vids)
+
     for i, c in enumerate(res.get("changes_applied") or []):
+        if _change_targets_rewritten_verifier(c):
+            continue  # superseded by a property-audit rewrite below
         items.append({"id": f"chg{i}", "kind": "change", "needs_answer": False,
                       "title": f"{c.get('artifact')} — {c.get('location')}",
                       "body": (f"<b>was:</b> {_esc(c.get('old'))}<br>"
@@ -161,7 +234,6 @@ def _decision_items(res: dict):
                       "body": (f"<b>{_esc(c.get('sme_question'))}</b><br>"
                                f"<i>{_esc(c.get('rationale'))}</i>"),
                       "meta": "NOT applied — artifact keeps its original wording"})
-    va = res.get("verifier_audit") or {}
     for i, v in enumerate(va.get("verifiers") or []):
         rw = (v.get("rewrite") or "").strip()
         if not rw:
@@ -179,31 +251,205 @@ def _decision_items(res: dict):
         if ":" in line:
             k, v = line.split(":", 1)
             vtext[k.strip()] = v.strip()
+    # cross-reference: a split child that duplicates an EXISTING verifier would
+    # double-count if kept (e.g. V5 -> V5a[4 FTE] + V5b[wage], but V4 already
+    # checks 4 FTE, so V5a duplicates V4). Surface that inside the split decision
+    # so the SME resolves it in one place instead of connecting the split and the
+    # dedupe decisions themselves.
+    dup_of = {}
+    for cl in (va.get("duplicate_clusters") or []):
+        vids = cl.get("verifier_ids") or []
+        keep = cl.get("keep") or (vids[0] if vids else None)
+        for vid in vids:
+            if vid != keep:
+                dup_of[vid] = keep
     for i, x in enumerate(res.get("verifier_splits_applied") or []):
         kids = x.get("children") or []
         rows = []
+        redundant_kids = []
         for k in kids:
             e = ev.get(k)
             tgt = (f"<span class='pill ok'>target {e.get('value')}"
                    f"{' ±' + str(e.get('tol')) if e.get('tol') else ''}</span>"
                    if e else "<span class='pill bad'>NO TARGET — unscoreable</span>")
-            rows.append(f"<li><span class='mono'>{_esc(k)}</span> {tgt}<br>"
-                        f"{_esc(vtext.get(k, '(text not found)'))}</li>")
+            dup_note = ""
+            if k in dup_of:
+                redundant_kids.append(k)
+                dup_note = (f"<br><span class='pill bad'>duplicates "
+                            f"{_esc(dup_of[k])} — dropped to avoid double-counting"
+                            f"</span>")
+            rows.append(f"<li><span class='mono'>{_esc(k)}</span> {tgt}{dup_note}"
+                        f"<br>{_esc(vtext.get(k, '(text not found)'))}</li>")
         tl = x.get("targetless_children") or []
+        meta = (f"target to {x.get('target_went_to')}"
+                + (f" — {len(tl)} child(ren) with no target: {', '.join(tl)}"
+                   if tl else ""))
+        if redundant_kids:
+            meta += (f" — accepting drops duplicate child(ren) "
+                     f"{', '.join(redundant_kids)}")
         items.append({"id": f"sp{i}", "kind": "split", "needs_answer": False,
+                      "parent": x.get("parent"), "children": kids,
+                      "redundant_children": redundant_kids,
                       "title": (f"{x.get('parent')} split into "
                                 f"{', '.join(kids)}"),
                       "body": (f"<b>was:</b> {_esc(x.get('parent_text'))}"
                                f"<br><b>becomes:</b><ul>{''.join(rows)}</ul>"),
-                      "meta": (f"target to {x.get('target_went_to')}"
-                               + (f" — {len(tl)} child(ren) with no target: "
-                                  f"{', '.join(tl)}" if tl else ""))})
-    for i, g in enumerate(va.get("coverage_gaps") or []):
+                      "meta": meta})
+    # FIX 3 — a value-bearing verifier that maps to NO derivation step. The
+    # mapping only links a numeric verifier to a step whose COMPUTED value matches
+    # the verifier's stated value; so a verifier asserting a number the derivation
+    # never produces (the planted "wait = 38" where the golden computes 42) lands
+    # in `unmatched`. That is a value error hiding as a coverage miss: the verifier
+    # is either factually wrong or the golden is missing the step it checks. The
+    # property audit passes such a verifier — it is structurally clean — so this
+    # deterministic signal is the only thing that catches it. Surface it.
+    #
+    # BUT the mapping uses ZERO tolerance for an exact match, so a verifier that
+    # merely ROUNDS (target 3.333 vs a step's 3.33333) also lands in `unmatched`
+    # though it is correct. Before flagging, re-check each unmatched numeric target
+    # against every computed step value with a small RELATIVE tolerance: if it is
+    # within rounding distance of some step, it is a rounding artifact, not a value
+    # error, and must not be flagged. Only a genuinely-off value (38 vs 42, 26.6 vs
+    # 29.4) is surfaced.
+    step_vals = []
+    for _sid, _node in (res.get("step_nodes") or {}).items():
+        if isinstance(_node, dict) and isinstance(_node.get("value"), (int, float)):
+            step_vals.append(float(_node["value"]))
+    # step_nodes isn't always carried on the package; fall back to claim verdicts
+    if not step_vals:
+        for _c in (res.get("corrected_claim_verdicts") or []):
+            rv = _c.get("recomputed")
+            if isinstance(rv, (int, float)):
+                step_vals.append(float(rv))
+
+    def _is_rounding_of_some_step(target) -> bool:
+        try:
+            t = float(target)
+        except (TypeError, ValueError):
+            return False
+        for sv in step_vals:
+            denom = max(abs(sv), abs(t), 1.0)
+            if abs(sv - t) <= 0.005 * denom:   # within 0.5% -> a rounding, not an error
+                return True
+        return False
+
+    mapping = res.get("verifier_mapping_report") or {}
+    for i, u in enumerate(mapping.get("unmatched") or []):
+        if str(u.get("kind", "numeric")).lower() != "numeric":
+            continue  # a non-numeric verifier not attaching is a weaker signal
+        if _is_rounding_of_some_step(u.get("target")):
+            continue  # correct value, just rounded — the mapping's 0-tol missed it
+        vid = u.get("verifier")
+        items.append({"id": f"unmatched{i}", "kind": "value_mismatch",
+                      "needs_answer": True,
+                      "title": (f"{vid} asserts a value the derivation never "
+                                f"produces"),
+                      "body": (f"<b>{_esc(vtext_map.get(vid, vid))}</b><br>"
+                               f"Stated target <b>{_esc(u.get('target'))}</b> "
+                               f"matches no computed step. Either the verifier's "
+                               f"number is wrong (correct it to the derivation's "
+                               f"value), or the golden is missing the step this "
+                               f"verifier checks (add the claim). A structurally "
+                               f"clean but factually wrong verifier passes every "
+                               f"other check — this is the only one that catches "
+                               f"it."),
+                      "meta": "NOT scoreable until resolved"})
+
+    # FIX 4 — coverage gaps: the DETERMINISTIC unwatched_load_bearing list is
+    # authoritative (it is computed from the mapping, not the model's judgment).
+    # The property audit's own coverage_gaps list is used only to enrich a step
+    # with a proposed-verifier string when it happens to name that step; the two
+    # disagreed on the toy task ([C2,C3,J1,J2] deterministic vs [J1] model), and
+    # trusting the model's shorter list silently dropped the real lambda hole.
+    cov = res.get("step_coverage") or {}
+    step_idx = _step_index(res)
+    model_gaps = {str(g.get("step")): g for g in (va.get("coverage_gaps") or [])}
+    for i, step in enumerate(cov.get("unwatched_load_bearing") or []):
+        mg = model_gaps.get(str(step), {})
+        # prefer the model's proposal; otherwise auto-author one from the step's
+        # own content so the SME always has something to Accept/Reject, never a
+        # blank "write it yourself".
+        proposed = mg.get("proposed_verifier") or _author_gap_verifier(
+            str(step), step_idx.get(str(step), {}))
+        authored = not mg.get("proposed_verifier")
+        why = (mg.get("why_it_matters")
+               or "a load-bearing step no verifier watches: a response could get "
+                  "it wrong with nothing objecting")
         items.append({"id": f"gap{i}", "kind": "gap", "needs_answer": False,
-                      "title": f"step {g.get('step')} has no verifier",
-                      "body": (f"{_esc(g.get('why_it_matters'))}<br>"
-                               f"<b>proposed:</b> {_esc(g.get('proposed_verifier'))}"),
+                      "step": str(step), "proposed_verifier": proposed,
+                      "proposed_is_authored": authored,
+                      "title": f"step {step} has no verifier",
+                      "body": (f"{_esc(why)}<br><b>proposed"
+                               + (" (auto-authored)" if authored else "")
+                               + f":</b> {_esc(proposed)}"),
                       "meta": "NOT added — accept to add it"})
+    # a model-proposed gap for a step NOT in the deterministic list is still shown
+    # (the model may see a semantic gap the mapping cannot), but marked advisory.
+    det_steps = {str(s) for s in (cov.get("unwatched_load_bearing") or [])}
+    for j, (step, g) in enumerate(model_gaps.items()):
+        if step in det_steps:
+            continue
+        items.append({"id": f"gapx{j}", "kind": "gap", "needs_answer": False,
+                      "title": f"step {step} — model-flagged coverage gap",
+                      "body": (f"{_esc(g.get('why_it_matters'))}<br>"
+                               f"<b>proposed:</b> {_esc(g.get('proposed_verifier'))}"
+                               f"<br><i>advisory: not in the deterministic "
+                               f"unwatched-step list</i>"),
+                      "meta": "NOT added — accept to add it"})
+    # Duplicate clusters: two+ verifiers assert the same quantity. The audit
+    # recommends which to keep; make it an actionable decision so a redundant
+    # verifier is actually dropped (MECE) rather than merely noted and shipped.
+    # Duplicate clusters: two+ verifiers assert the same quantity. The audit
+    # recommends which to keep; make it an actionable decision so a redundant
+    # verifier is actually dropped (MECE) rather than merely noted and shipped.
+    for i, c in enumerate(va.get("duplicate_clusters") or []):
+        ids = c.get("verifier_ids") or []
+        items.append({"id": f"dup{i}", "kind": "dedupe", "needs_answer": False,
+                      "title": (f"{', '.join(ids)} assert the same quantity"
+                                + ("" if c.get("values_agree", True)
+                                   else " (VALUES DISAGREE)")),
+                      "body": (f"<b>quantity:</b> {_esc(c.get('quantity'))}"
+                               f"<br><b>recommended:</b> "
+                               f"{_esc(c.get('recommended_action'))}"),
+                      "meta": ("NOT applied — accept to drop the restated "
+                               "verifier(s) and keep one")})
+    # Temporal drift: a split child (or verifier) that states a LIVE value with no
+    # date/source pin. First-class defect, so it gets a first-class decision —
+    # otherwise it is only visible in the raw split log, and the SME cannot see
+    # that a verifier will decay as the world moves.
+    seen_temporal = []
+    for x in (res.get("verifier_splits_applied") or []):
+        seen_temporal += x.get("temporal_unpinned_children") or []
+    for i, vid in enumerate(dict.fromkeys(seen_temporal)):  # dedupe, keep order
+        items.append({"id": f"tmp{i}", "kind": "temporal", "needs_answer": True,
+                      "title": f"{vid} states an unpinned live value (temporal drift)",
+                      "body": (f"<b>{_esc(vtext_map.get(vid, vid))}</b><br>"
+                               f"This verifier depends on a value that changes over "
+                               f"time (e.g. \u201ctoday\u2019s market rate\u201d) with "
+                               f"no date or source pin, so the golden decays as the "
+                               f"world moves. Pin it to a dated source, or confirm "
+                               f"the intended fixed value."),
+                      "meta": "NOT scoreable until pinned — answer with the pin"})
+    # SME verdict override — shown only when the model's verdict is
+    # non-proceedable. Once the SME resolves the defects that drove the verdict,
+    # this is where they re-grade the task so it can become scoreable. Answering
+    # is REQUIRED to seal a scoreable package from a BROKEN augment.
+    if str(res.get("audit_verdict", "")).upper() in (
+            "BROKEN", "UNGRADEABLE", "NON_DETERMINISTIC"):
+        items.append({
+            "id": "verdict", "kind": "verdict_override", "needs_answer": True,
+            "title": f"Re-grade the {_esc(res.get('audit_verdict'))} verdict",
+            "body": (f"The model graded this task "
+                     f"<b>{_esc(res.get('audit_verdict'))}</b> (not scoreable). If "
+                     f"your decisions above resolve the defects that caused it, "
+                     f"re-grade it to a proceedable verdict so the sealed task can "
+                     f"be scored. Answer with the new verdict and a one-line "
+                     f"justification, e.g. <span class=mono>SALVAGEABLE: V1/V2 "
+                     f"corrected, gaps closed</span>. Accepted values: "
+                     f"<span class=mono>SOUND</span> or "
+                     f"<span class=mono>SALVAGEABLE</span>. Leave rejected to keep "
+                     f"the task not-scoreable."),
+            "meta": "answer 'SOUND: ...' or 'SALVAGEABLE: ...' to make scoreable"})
     return items
 
 
@@ -471,6 +717,87 @@ def _css_with(extra: str) -> str:
     return _CSS.replace("</style>", extra + "\n</style>")
 
 
+def _synthesize_reason(res: dict) -> list:
+    """Assemble a human-readable list of the defects the pipeline DETERMINISTICALLY
+    detected, for use when the model returns a verdict with no primary_reason. Only
+    reads signals the pipeline already computed — it invents nothing. Turns an
+    'unexplained BROKEN' into 'here is what we detected', which is what the SME
+    needs to act. Each entry names the verifier/step and the defect class."""
+    out = []
+    mapping = res.get("verifier_mapping_report") or {}
+    # value-mismatch: a numeric verifier whose value matches no computed step
+    for u in mapping.get("unmatched", []):
+        if str(u.get("kind", "numeric")).lower() == "numeric":
+            tgt = u.get("target")
+            out.append(f"{u.get('verifier')} asserts a value"
+                       + (f" ({tgt})" if tgt is not None else "")
+                       + " that no derivation step produces (value error, or a "
+                         "missing step)")
+    # non-atomic verifiers that were split
+    for s in res.get("verifier_splits_applied", []):
+        kids = s.get("children") or []
+        out.append(f"{s.get('parent')} was non-atomic and split into "
+                   f"{', '.join(kids)}")
+        for child in (s.get("temporal_unpinned_children") or []):
+            out.append(f"{child} states an unpinned live value (temporal drift)")
+    # duplicate (non-MECE) verifiers
+    for c in (res.get("verifier_audit") or {}).get("duplicate_clusters", []):
+        ids = c.get("verifier_ids") or []
+        if len(ids) > 1:
+            out.append(f"{', '.join(ids)} assert the same quantity (not MECE)")
+    # decision inversion flagged by the auditor
+    if res.get("decision_inversion"):
+        out.append("a decision/recommendation appears inverted vs the solution "
+                   "logic (decision inversion)")
+    # non-blocking claim warnings (mislabelled inputs etc.)
+    for c in res.get("corrected_claim_verdicts", []):
+        st = c.get("status")
+        if st and st not in ("CONFIRMED", "NOT_ARITHMETIC"):
+            out.append(f"claim {c.get('id')} is {st} "
+                       f"({str(c.get('label', ''))[:40]})")
+    # load-bearing steps no verifier watches
+    cov = (res.get("step_coverage") or {}).get("unwatched_load_bearing") or []
+    if cov:
+        out.append(f"{len(cov)} load-bearing step(s) have no verifier watching "
+                   f"them ({', '.join(map(str, cov[:6]))})")
+    return out
+
+
+def _verdict_reason_block(res: dict, verdict: str) -> str:
+    """Show WHY the auditor reached a non-SOUND verdict, and — critically — when a
+    non-proceedable verdict (BROKEN / UNGRADEABLE) carries NO model reason,
+    SYNTHESIZE one from the defects the pipeline deterministically detected. The
+    model is asked for a one-line primary_reason but sometimes returns the verdict
+    with an empty reason, empty findings, and empty prose — leaving the SME a bare
+    'BROKEN'. Rather than only flagging that as unexplained, we now list what the
+    pipeline itself caught (value mismatches, non-atomic splits, temporal drift,
+    coverage gaps), so the verdict is actionable even when the model is silent."""
+    reason = (res.get("primary_reason") or "").strip()
+    prose = (res.get("prose_findings") or "").strip()
+    findings = res.get("findings") or []
+    non_proceedable = verdict in ("BROKEN", "UNGRADEABLE", "NON_DETERMINISTIC")
+    if reason:
+        cls = "bad" if non_proceedable else "warn"
+        return f"<p class='pill {cls}'>Reason: {_esc(reason)}</p>"
+    if non_proceedable and not prose and not findings:
+        detected = _synthesize_reason(res)
+        if detected:
+            items = "".join(f"<li>{_esc(x)}</li>" for x in detected)
+            return ("<div class='pill bad' style='display:block;text-align:left'>"
+                    "&#9888; The model returned <b>" + _esc(verdict) + "</b> with "
+                    "no stated reason. From the pipeline's own detections, the "
+                    "verdict is likely driven by:<ul style='margin:6px 0 0'>"
+                    + items + "</ul><span style='font-weight:400'>(synthesized "
+                    "from deterministic signals, not the model's words — verify "
+                    "against the Decisions section below.)</span></div>")
+        return ("<p class='pill bad'>&#9888; UNEXPLAINED VERDICT — the model "
+                "graded this <b>" + _esc(verdict) + "</b> but returned no "
+                "primary_reason, and the pipeline detected no specific defect "
+                "signals either. Re-run this task or inspect the corrected "
+                "claims manually.</p>")
+    return ""
+
+
 def write_augment_report(res: dict, out_path: str) -> str:
     tid = _esc(res.get("task_id"))
     verdict = _esc(res.get("audit_verdict"))
@@ -516,6 +843,7 @@ def write_augment_report(res: dict, out_path: str) -> str:
 <h1>{tid} — Augmentation & Corrections</h1>
 <p>Audit verdict: <span class='pill {vcls}'>{verdict}</span>
 &nbsp; Crux size: <b>{len(crux)}</b> verifiers &nbsp; Model: <span class=mono>{_esc(res.get('model_used'))}</span></p>
+{_verdict_reason_block(res, verdict)}
 {"<p class='pill bad'>ERROR: "+_esc(res.get('error'))+"</p>" if res.get('error') else ""}
 {"<p class='pill warn'>&#9888; DEGRADED GOLDEN — these input files could not be read and were NOT used: "+", ".join("<span class=tag>"+_esc(s)+"</span>" for s in res.get('skipped_inputs',[]))+"</p>" if res.get('skipped_inputs') else ""}
 
@@ -530,8 +858,7 @@ def write_augment_report(res: dict, out_path: str) -> str:
 
 <h2>Corrections applied</h2>
 {"<table><tr><th>Artifact</th><th>Where</th><th>Type</th><th>Old</th><th>New</th><th>Why</th></tr>"+chg_rows+"</table>" if chg_rows else "<p><i>No changes.</i></p>"}
-{("<p class='pill warn'>"+str(len(res.get('judgment_changes_pending_sme',[])))+" judgment change(s) NOT applied — the artifact keeps its original wording and a question is posed for you below. Mechanical changes above are applied.</p>") if res.get('judgment_changes_pending_sme') else ""}
-{("<h2>Questions for the SME</h2><ol>"+"".join("<li><b>"+_esc(c.get('artifact'))+"</b> — "+_esc(c.get('location'))+"<br>"+_esc(c.get('sme_question'))+"</li>" for c in res.get('judgment_changes_pending_sme',[]))+"</ol>") if res.get('judgment_changes_pending_sme') else ""}
+{("<p class='pill warn'>"+str(len(res.get('judgment_changes_pending_sme',[])))+" judgment change(s) NOT applied — the artifact keeps its original wording and a question is posed for you in Decisions required below. Mechanical changes above are applied.</p>") if res.get('judgment_changes_pending_sme') else ""}
 
 <h2>Golden trajectory</h2>
 {_trajectory(res)}
@@ -555,6 +882,89 @@ def write_augment_report(res: dict, out_path: str) -> str:
     return out_path
 
 
+def _dag_structure(dag: dict, title_note: str = "",
+                   weights: dict = None) -> str:
+    """Render a DAG as a readable structural view for the sealed report (no SVG
+    engine here): nodes are grouped by depth (roots first), each showing what it
+    depends on and, optionally, its Shapley weight. Makes the graph reviewable as
+    an artifact rather than only as a 'depends on' column."""
+    if not dag:
+        return "<p><i>(empty)</i></p>"
+    # depth = longest path from a root
+    depth = {}
+
+    def _d(n, seen=None):
+        seen = seen or set()
+        if n in seen:
+            return 0
+        if n in depth:
+            return depth[n]
+        deps = dag.get(n, [])
+        depth[n] = 0 if not deps else 1 + max(
+            _d(p, seen | {n}) for p in deps if p in dag)
+        return depth[n]
+
+    for n in dag:
+        _d(n)
+    by_depth = {}
+    for n, d in depth.items():
+        by_depth.setdefault(d, []).append(n)
+    rows = ""
+    for d in sorted(by_depth):
+        level = "root" if d == 0 else f"depth {d}"
+        cells = ""
+        for n in sorted(by_depth[d]):
+            deps = dag.get(n, [])
+            wtxt = ""
+            if weights and n in weights:
+                wtxt = f" <span class='mono'>{weights[n] * 100:.0f}%</span>"
+            edge = (" &larr; " + ", ".join(deps)) if deps else ""
+            cells += (f"<div style='display:inline-block;border:1px solid #e7e2d8;"
+                      f"border-radius:6px;padding:4px 9px;margin:3px;background:#fff'>"
+                      f"<b class='mono'>{_esc(n)}</b>{wtxt}"
+                      f"<span class='mono' style='color:#7a746a'>{_esc(edge)}</span>"
+                      f"</div>")
+        rows += (f"<div style='margin:4px 0'><span class='pill' "
+                 f"style='background:#f2eee6'>{level}</span> {cells}</div>")
+    note = f"<p style='color:#7a746a;margin:2px 0 8px'>{title_note}</p>" if title_note else ""
+    return note + rows
+
+
+def _sealed_verifier_table(res: dict) -> str:
+    """Verifier · DAG · Shapley table for the sealed set: every verifier, its
+    dependencies, base weight, full-DAG Shapley (all verifiers), and (crux only)
+    its crux-DAG Shapley weight."""
+    crux = set(res.get("crux_ids", []))
+    cshap = res.get("crux_dag_shapley_weights") or res.get("crux_shapley_weights", {})
+    fshap = res.get("full_dag_shapley_weights", {})
+    dag = res.get("dag", {})
+    base = res.get("base_weights", {})
+    expected = res.get("expected_values", {})
+    v2s = res.get("verifier_to_step", {})
+    rows = ""
+    for vid in dag.keys():
+        is_crux = vid in crux
+        cw = cshap.get(vid, 0.0) * 100 if is_crux else 0.0
+        fw = fshap.get(vid, 0.0) * 100
+        deps = ", ".join(dag.get(vid, [])) or "root"
+        step = v2s.get(vid, "—")
+        sov = (expected.get(vid, {}) or {}).get("source_of_verification", "")
+        rows += (f"<tr><td class='mono'>{_esc(vid)}</td>"
+                 f"<td>{'<span class=crux>CRUX</span>' if is_crux else ''}</td>"
+                 f"<td class='mono'>{_esc(step)}</td>"
+                 f"<td class='mono'>{deps}</td>"
+                 f"<td class='mono'>{base.get(vid, 0) * 100:.1f}%</td>"
+                 f"<td class='mono'>{fw:.1f}%</td>"
+                 f"<td class='mono'>{cw:.1f}%"
+                 + (f" <span class='bar' style='width:{max(2, cw):.0f}px'></span>"
+                    if is_crux else "") + "</td>"
+                 f"<td class='mono'>{_esc(sov)}</td></tr>")
+    return ("<table><tr><th>ID</th><th>Crux</th><th>Watches step</th>"
+            "<th>Depends on</th><th>Base wt</th><th>Full-DAG Shapley</th>"
+            "<th>Crux-DAG Shapley</th><th>Source of verification</th></tr>"
+            + rows + "</table>")
+
+
 def write_golden_report(res: dict, out_path: str) -> str:
     tid = _esc(res.get("task_id"))
     fmt = _esc(res.get("gold_deliverable_format"))
@@ -567,6 +977,73 @@ def write_golden_report(res: dict, out_path: str) -> str:
 <h1>{tid} — Golden Deliverable</h1>
 <p>Format: <span class='pill ok'>{fmt}</span> &nbsp; {len(secs)} section(s)</p>
 {body if body else "<p><i>No deliverable generated.</i></p>"}
+</body></html>"""
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(doc)
+    return out_path
+
+
+def write_sealed_report(res: dict, out_path: str) -> str:
+    """The clean FINAL prompt-package report, produced after apply_decisions seals
+    the golden. Unlike the augment report, it carries NO review scaffolding (no
+    'Decisions required', no 'Corrections applied', no verifier-property audit) —
+    it is what the golden IS, for the SME to review as a finished artifact: the
+    final prompt, solution logic, sanity check, golden deliverable, golden
+    trajectory, and the sealed verifiers with the DAG and Shapley weights."""
+    tid = _esc(res.get("task_id"))
+    verdict = _esc(res.get("audit_verdict"))
+    scoreable = res.get("scoreable")
+    vcls = "ok" if scoreable else "warn"
+    scls = "ok" if scoreable else "bad"
+    crux = res.get("crux_ids", []) or []
+
+    prompt = res.get("corrected_prompt") or res.get("prompt") or ""
+    logic = res.get("corrected_solution_logic") or res.get("solution_logic") or ""
+    sanity = res.get("corrected_sanity_check") or res.get("sanity_check") or ""
+    fmt = _esc(res.get("gold_deliverable_format"))
+    gold_secs = res.get("gold_deliverable_sections", []) or []
+    gold_body = "".join(
+        f"<h3>{_esc(s.get('title'))}</h3><pre>{_esc(s.get('content'))}</pre>"
+        for s in gold_secs) or "<p><i>No deliverable.</i></p>"
+
+    _CSS_LOCAL = _css_with("")
+    doc = f"""<!doctype html><html><head><meta charset=utf-8>
+<title>{tid} · final prompt package</title>{_CSS_LOCAL}</head><body>
+<h1>{tid} — Final Prompt Package (sealed)</h1>
+<p>Verdict: <span class='pill {vcls}'>{verdict}</span> &nbsp;
+Scoreable: <span class='pill {scls}'>{'yes' if scoreable else 'no'}</span> &nbsp;
+Crux: <b>{len(crux)}</b> verifier(s) &nbsp;
+Sealed from: <span class=mono>{_esc(res.get('run_hash') or '')}</span></p>
+{"<p class='pill warn'>Not scoreable: " + _esc(res.get('not_scoreable_reason')) + "</p>" if not scoreable and res.get('not_scoreable_reason') else ""}
+
+<h2>Prompt</h2>
+<pre>{_esc(prompt)}</pre>
+
+<h2>Solution logic</h2>
+<pre>{_esc(logic)}</pre>
+
+<h2>Sanity check (trap / expert path)</h2>
+<pre>{_esc(sanity)}</pre>
+
+<h2>Golden deliverable</h2>
+<p>Format: <span class='pill ok'>{fmt}</span> &nbsp; {len(gold_secs)} section(s)</p>
+{gold_body}
+
+<h2>Golden trajectory</h2>
+{_trajectory(res)}
+
+<h2>Verifiers · DAG · Shapley weights</h2>
+{_sealed_verifier_table(res)}
+{"<p class='pill ok'>Crux (sanity-anchored + immediate parents): " + ", ".join("<span class=tag>" + _esc(c) + "</span>" for c in crux) + "</p>" if crux else ""}
+
+<h2>Full DAG</h2>
+{_dag_structure(res.get('dag') or {}, "Every verifier by depth (roots first); &larr; shows dependencies. Weight = full-DAG Shapley.", res.get('full_dag_shapley_weights'))}
+
+<h2>Crux DAG</h2>
+{_dag_structure(res.get('crux_dag') or {}, "The crux verifiers only, as an induced subgraph. Weight = crux-DAG Shapley.", res.get('crux_dag_shapley_weights')) if res.get('crux_dag') else "<p><i>No crux DAG (crux not yet computed or empty).</i></p>"}
+
+<h2>Verifiers (canonical)</h2>
+<pre>{_esc(res.get('augmented_verifiers_text'))}</pre>
 </body></html>"""
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(doc)

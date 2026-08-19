@@ -254,7 +254,7 @@ Then output a SINGLE JSON object (after </analysis>):
 {{
   "task_id": "{task_id}",
   "verdict": "SOUND|SALVAGEABLE|BROKEN|UNGRADEABLE|NON_DETERMINISTIC",
-  "primary_reason": "one line",
+  "primary_reason": "one line — REQUIRED and specific when verdict is BROKEN, UNGRADEABLE, or NON_DETERMINISTIC: name the exact claim/step and the defect (e.g. 'C1 uses lambda=10 but the file has 30'). A non-proceedable verdict with an empty or vague reason is unusable to the reviewer and will be rejected.",
   "decision_inversion": false,
   "corrected_solution_logic": "the full corrected solution logic text, or empty string if no change",
   "corrected_claims": [
@@ -330,8 +330,18 @@ Rules for "corrected_claims" — this is the derivation, and it is consumed by c
   {{"name": "R001_reported", "value": null, "source_type": "file"}} cannot be
   checked at all: the arithmetic has nothing to evaluate, and the claim is thrown
   out as unverifiable. Write {{"name": "R001_reported", "value": 9200, ...}}.
-- "operation" IS ALWAYS MANDATORY. A claim with a claimed_result and no operation
-  states an answer with no working, which is exactly what cannot be verified.
+- "operation" IS ALWAYS MANDATORY *for an arithmetic claim*. A claim with a
+  claimed_result and no operation states an answer with no working, which is
+  exactly what cannot be verified.
+- EXCEPTION — a value produced by a computation OUTSIDE basic arithmetic (a
+  queueing formula such as the Erlang-C / M/M/c mean wait, an integral, a root
+  find, a simulation, a statistical fit) cannot be written as a whitelisted
+  expression. Do NOT invent a fake operation for it and do NOT leave it looking
+  like a slip. Set "source_of_verification": "non_arithmetic", give the
+  claimed_result, and leave "operation" empty. Such a claim is recorded and
+  trusted (verified by the accepted formula/method), not recomputed, and does not
+  block. Use this ONLY when the value genuinely is not simple arithmetic — never
+  to dodge writing an operation you could have written.
 - "source_type" says WHERE each input came from, and decides whether code checks
   it against the files:
     "file"     — read verbatim from a supplied file. Code will look for it, so it

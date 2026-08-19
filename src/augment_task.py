@@ -2,19 +2,44 @@
 """
 Task augmenter. Runs on top of the existing two-call auditor.
 
+ORDERING INVARIANT (why this file is shaped the way it is):
+  Every automatic change, suggested change, and judgment-required generation is
+  produced BEFORE the finalization call (auditor Call 2). The frozen graph
+  (DAG -> weights -> crux -> Shapley) authors no text, so it is computed LAST —
+  and "last" means after the SME seals the package (see apply_decisions), not
+  here. This module runs a PREVIEW freeze so a package is inspectable before SME
+  review; apply_decisions re-runs the identical freeze on the sealed artifacts.
+
 Per task:
-  0. audit_task(...)         -> verified arithmetic + corrected_solution_logic + changes
-  1. apply corrections       -> corrected package fields (no SME gate; JUDGMENT edits
-                                applied now but tagged for later SME review)
-  2. AUGMENT Opus call       -> golden deliverable + DAG edges + Sanity-Check anchors
-                                + any augmented verifiers   (single call)
-  3. build verifier set + DAG + base weights (verifier_weights.compute_weights)
-  4. select_crux(...)        -> deterministic crux set from anchors + DAG
-  5. crux_shapley(...)       -> crux-only Shapley weights
-  6. assemble AugmentResult (JSON-serializable) for CSV + HTML emit
+  0. audit_task(...)         -> verified arithmetic + corrected artifacts +
+                                the FINALIZED verifier set. As of the 1b reorder
+                                the auditor runs the property audit (splits/
+                                rewrites) and freezes targets from verifier text,
+                                so the verifier set arrives atomic and final and
+                                augment never authors or splits verifiers.
+  1. apply corrections       -> corrected package fields (no SME gate; JUDGMENT
+                                edits applied now but tagged for later SME review)
+  2. AUGMENT Opus call       -> golden deliverable + Sanity-Check anchors, authored
+                                OVER the auditor's final verifier set. Augment may
+                                only EXTEND the set (add verifiers for uncovered
+                                gold values); it never re-splits or re-authors.
+                                The augmenter's asserted DAG edges are NOT used.
+  3. derive_frozen_graph()   -> verifier set -> step graph -> mapping -> coverage
+                                -> DAG -> base weights -> crux -> Shapley.
+                                PREVIEW ONLY here; the authoritative freeze runs
+                                in apply_decisions after SME resolution.
+  4. assemble AugmentResult (JSON-serializable) for CSV + HTML emit
+
+Because the verifier set is finalized in the auditor (before augment), the old
+Call-2 -> augment -> property-audit cycle is gone: augment now consumes a final
+set instead of producing one.
 
 The three crux metrics are computed later per-response by the scorer; the
-augmenter freezes the crux set + Shapley weights so scoring is pure matching.
+freeze fixes the crux set + Shapley weights so scoring is pure matching.
+
+derive_frozen_graph is the single re-derivation routine shared by this module
+(preview) and apply_decisions (authoritative seal), so the two can never
+diverge: identical code, only the inputs (pre- vs post-SME artifacts) differ.
 """
 
 from __future__ import annotations
@@ -107,6 +132,7 @@ class AugmentResult:
     judgment_steps: List[dict] = field(default_factory=list)
     gate: dict = field(default_factory=dict)
     augmented_verifiers_text: str = ""          # canonical V<n>: text (existing + added)
+    augmented_verifiers_added: List[str] = field(default_factory=list)  # ids augment added
     changes_applied: List[dict] = field(default_factory=list)
     judgment_changes_pending_sme: List[dict] = field(default_factory=list)
 
@@ -172,6 +198,210 @@ def final_answer_verifiers(expected_values: Dict[str, dict],
     out |= {v for v, ev in (expected_values or {}).items()
             if str((ev or {}).get("kind", "")).lower() == "decision"}
     return sorted(out)
+
+
+def _verifiers_from_text(augmented_verifiers_text: str) -> List[dict]:
+    """Parse a canonical 'V<n>: text' block back into [{'id','text'}].
+
+    The id space (V1, V5a, ...) is the contract the rest of the pipeline keys on,
+    so re-derivation reads the verifier set from the same text the report and the
+    SME saw, never from a stale in-memory list.
+    """
+    import re
+    out = []
+    for line in (augmented_verifiers_text or "").splitlines():
+        m = re.match(r"\s*(V\d+[a-z]?)\s*:\s*(.*)", line)
+        if m:
+            out.append({"id": m.group(1), "text": m.group(2).strip()})
+    return out
+
+
+def derive_frozen_graph(pkg: dict, compute_shapley: bool = False,
+                        forced_verifier_to_step=None,
+                        seal_crux: bool = False) -> dict:
+    """Recompute the whole frozen graph from a package dict, in place.
+
+    This is the ONLY routine that computes the scored structure, and it authors
+    no text — it only reads the (possibly SME-edited) artifacts and writes the
+    derived fields. That is why it is safe to run last, and why it must run again
+    after any edit to the verifier set, the targets, or the claim verdicts. It is
+    called twice with the same code: once here as a preview, once in
+    apply_decisions as the authoritative seal; only the inputs differ.
+
+    `compute_shapley` gates the crux-only Shapley computation. It is expensive
+    (Monte-Carlo over verifier coalitions) AND its value is meaningful only on the
+    FINAL sealed set — computing it at preview time produces a number that the SME
+    edits then invalidate, and whose run-to-run wobble is pure noise because the
+    pre-seal verifier set itself varies. So Shapley is OFF at preview and ON only
+    at the seal (apply_decisions passes compute_shapley=True). Preview still emits
+    the crux set and base weights; only the Shapley layer waits for the seal.
+
+    Reads from pkg:  augmented_verifiers_text, expected_values,
+                     corrected_claim_verdicts, judgment_steps,
+                     trap_anchor_ids, expert_anchor_ids.
+    Writes to pkg:   step_graph, step_graph_health, verifier_to_step,
+                     verifier_mapping_report, step_coverage, dag, dag_derived,
+                     dag_source, base_weights, amzn_weights, depths,
+                     final_answer_verifiers, crux_ids, crux_shapley_weights, and
+                     (on inconsistency) scoreable / not_scoreable_reason.
+
+    The rebuild starts from claim_graph so BOTH the step graph and step_nodes are
+    reconstructed from the persisted claim/judgment steps — a reverted split or an
+    added verifier changes the id space, and a partial patch would leave stale
+    ids. claim_graph is pure, so the rebuild is deterministic.
+    """
+    from src.derive_dag import (claim_graph, graph_health,
+                                 map_verifiers_to_steps, derive_verifier_dag,
+                                 step_coverage)
+
+    all_vs = _verifiers_from_text(pkg.get("augmented_verifiers_text", ""))
+    vtexts = {v["id"]: v.get("text", "") for v in all_vs}
+    valid_ids = {v["id"] for v in all_vs}
+    ev = {k: v for k, v in (pkg.get("expected_values") or {}).items()
+          if k in valid_ids}
+    pkg["expected_values"] = ev
+
+    # 1) step graph + nodes, rebuilt from the persisted trajectory
+    step_graph, step_nodes = claim_graph(
+        pkg.get("corrected_claim_verdicts", []), pkg.get("judgment_steps", []))
+    pkg["step_graph"] = step_graph
+    pkg["step_graph_health"] = graph_health(step_graph, step_nodes)
+    if not step_graph:
+        pkg["scoreable"] = False
+        pkg["not_scoreable_reason"] = (
+            "no trajectory: no corrected claims, so no dependency graph can be "
+            "derived")
+        return pkg
+
+    # 2) verifier -> step mapping, then coverage (the inverse question)
+    vmap = map_verifiers_to_steps(ev, vtexts, step_nodes)
+    frozen_map = dict(vmap.verifier_to_step)
+    # Seal-only: overlay any caller-forced verifier->step bindings. Used by
+    # apply_decisions for gap verifiers added over a judgment step, which carry no
+    # numeric value and so cannot be reached by value-based mapping — but the step
+    # they were authored for is known. Only binds verifiers that exist and steps
+    # that exist; never overrides an automatic mapping.
+    if forced_verifier_to_step:
+        for vid, sid in forced_verifier_to_step.items():
+            if vid in valid_ids and sid in step_nodes and vid not in frozen_map:
+                frozen_map[vid] = sid
+    pkg["verifier_to_step"] = frozen_map
+    pkg["verifier_mapping_report"] = {
+        "n_mapped": len(frozen_map), "n_verifiers": len(all_vs),
+        "unmatched": vmap.unmatched, "ambiguous": vmap.ambiguous,
+        "near_misses": vmap.near_misses, "detail": vmap.detail}
+    pkg["step_coverage"] = step_coverage(step_nodes, step_graph, frozen_map)
+
+    # 3) verifier DAG derived from step ancestry
+    dag = derive_verifier_dag(step_graph, frozen_map,
+                              all_verifier_ids=[v["id"] for v in all_vs])
+    pkg["dag"] = dag
+    pkg["dag_derived"] = dag
+    pkg["dag_source"] = "derived"
+    if not dag:
+        pkg["scoreable"] = False
+        pkg["not_scoreable_reason"] = (
+            "no verifier could be placed on a derivation step, so no dependency "
+            "graph could be derived")
+        return pkg
+
+    # 4) base weights (depth+1, normalized to 100 -> stored as fraction)
+    dw, aw, depths = compute_weights(all_vs, dag)
+    pkg["base_weights"] = {k: v / 100.0 for k, v in dw.items()}
+    pkg["amzn_weights"] = aw
+    pkg["depths"] = depths
+
+    # 5) deterministic crux from anchors + final-answer verifiers
+    trap_anchors = [a for a in (pkg.get("trap_anchor_ids") or []) if a in valid_ids]
+    expert_anchors = [a for a in (pkg.get("expert_anchor_ids") or []) if a in valid_ids]
+    fav = final_answer_verifiers(ev, frozen_map, step_graph)
+    pkg["final_answer_verifiers"] = fav
+    # SEAL-ONLY crux methodology: at seal (seal_crux=True) the crux is widened by
+    # immediate parents and the dropped/deduped verifiers are excluded, computed
+    # against the FINAL post-decision DAG. During augmentation this stays the
+    # direct set (the preview crux), untouched.
+    _excluded = pkg.get("_crux_excluded_ids") or [] if seal_crux else []
+    sel = select_crux(all_vs, dag,
+                      trap_anchor_ids=trap_anchors or None,
+                      expert_anchor_ids=expert_anchors or None,
+                      expected_value_ids=list(ev.keys()),
+                      final_answer_ids=fav,
+                      include_immediate_parents=seal_crux,
+                      excluded_ids=_excluded)
+    pkg["crux_ids"] = sel.crux_ids
+    pkg["crux_anchors_trap"] = sel.anchors_trap
+    pkg["crux_anchors_expert"] = sel.anchors_expert
+    pkg["crux_dropped_no_expected"] = sel.dropped_no_expected
+
+    # 6) crux-only Shapley — SEAL ONLY. Skipped at preview (see docstring): the
+    # value is meaningful only on the final sealed set, and computing it pre-seal
+    # both wastes the Monte-Carlo cost and reports a number the SME's edits will
+    # invalidate. Preview leaves crux_shapley_weights empty; the seal fills it.
+    if compute_shapley:
+        pkg["crux_shapley_weights"] = crux_shapley(
+            all_vs, dag, pkg["base_weights"], pkg["crux_ids"])
+    else:
+        pkg.setdefault("crux_shapley_weights", {})
+
+    # 7) re-assert the scoreability gates on the (possibly re-derived) set.
+    #    (a) a crux verifier still tied to an unresolved judgment question blocks.
+    flagged = [vid for vid in pkg["crux_ids"]
+               if (ev.get(vid, {}) or {}).get("source_of_verification")
+               == "judgment_flagged"]
+    if flagged:
+        pkg["scoreable"] = False
+        pkg["not_scoreable_reason"] = ("crux verifier(s) judgment_flagged: "
+                                       + ", ".join(sorted(flagged)))
+        return pkg
+    #    (b) a load-bearing derivation step that NO verifier watches is a hole in
+    #        the scoring: a response could get that step wrong with nothing
+    #        objecting. Previously reported only; now it blocks, so the coverage
+    #        gap is fixed (author a verifier) rather than silently shipped.
+    ulb = (pkg.get("step_coverage", {}) or {}).get("unwatched_load_bearing", [])
+    if ulb:
+        pkg["scoreable"] = False
+        pkg["not_scoreable_reason"] = (
+            f"{len(ulb)} load-bearing step(s) watched by no verifier: "
+            + ", ".join(map(str, ulb[:6])) + ("..." if len(ulb) > 6 else "")
+            + ". A response could get these wrong with nothing objecting; author "
+              "a verifier for each before scoring.")
+        return pkg
+    #    (c) a split child carrying a live value with no date/source pin is a
+    #        temporal_drift defect created after Call 1's screen. It must be
+    #        pinned (by the SME at seal) before the package is scoreable.
+    temporal_unpinned = []
+    for entry in (pkg.get("verifier_splits_applied") or []):
+        temporal_unpinned += entry.get("temporal_unpinned_children", []) or []
+    temporal_unpinned = [t for t in temporal_unpinned
+                         if t in {v["id"] for v in all_vs}]
+    # Re-screen against CURRENT text: a child the augmenter flagged may since have
+    # been PINNED by the SME at seal (a date or source added). Only children whose
+    # current text is still unpinned should block scoring — otherwise a resolved
+    # temporal decision would wrongly keep the package unscoreable.
+    if temporal_unpinned:
+        try:
+            from src.verifier_audit import _child_has_unpinned_live_value
+            vtext_now = {v["id"]: v.get("text", "") for v in all_vs}
+            temporal_unpinned = [
+                t for t in temporal_unpinned
+                if _child_has_unpinned_live_value(vtext_now.get(t, ""))]
+        except Exception:                                       # noqa: BLE001
+            pass
+    if temporal_unpinned:
+        pkg["scoreable"] = False
+        pkg["not_scoreable_reason"] = (
+            "split verifier(s) carry an unpinned live value (temporal drift): "
+            + ", ".join(sorted(temporal_unpinned))
+            + ". Pin each to a date or source file before scoring.")
+        return pkg
+    # All STRUCTURAL gates passed. Clear any stale not-scoreable state carried in
+    # from a prior derive (an earlier coverage/temporal failure that later SME
+    # decisions resolved). derive_frozen_graph judges structure only; a
+    # non-structural block such as the audit verdict is re-applied by the caller
+    # (apply_decisions) afterwards, so clearing here does not override it.
+    pkg["scoreable"] = True
+    pkg["not_scoreable_reason"] = ""
+    return pkg
 
 
 def _run_hash(res) -> str:
@@ -300,6 +530,7 @@ def augment_task(
                            input_files_names=input_files_names,
                            input_corpus=input_corpus,
                            model_name=model_name,
+                           run_verifier_audit=run_verifier_audit,
                            # the auditor's leakage verdict is an absence claim,
                            # so it must know which files it never saw
                            skipped_inputs=skipped_inputs)
@@ -359,12 +590,17 @@ def augment_task(
     else:
         arithmetic_results_text = "(no arithmetic claims)"
 
+    # The verifier set is ALREADY finalized by the auditor (1b): splits applied,
+    # targets frozen from text. Augment authors the golden over that final set and
+    # may only EXTEND it (add verifiers for uncovered gold values); it does not
+    # re-author or split. Feed it the finalized block, not the raw originals.
+    finalized_vtext = (audit.final_verifiers_text or "").strip() or verifiers_text
     prompt = AUGMENT_TEMPLATE.format(
         task_id=task_id,
         prompt_text=prompt_text or "(empty)",
         solution_logic_text=final_logic or "(none)",
         sanity_check_text=sanity_check_text or "(none)",
-        verifiers_text=verifiers_text or "(none)",
+        verifiers_text=finalized_vtext or "(none)",
         arithmetic_results_text=arithmetic_results_text,
     )
     try:
@@ -387,190 +623,102 @@ def augment_task(
         res.gold_deliverable_format, res.gold_deliverable_sections)
     res.notes = aug.get("notes", "")
 
-    # --- Stage 3: verifier set + DAG + base weights ---
-    # Augmentation extends the CORRECTED verifier block when call 2 produced one.
-    # Extending the stale originals instead would leave a verifier the correction
-    # retargeted still pinning the old figure, and that verifier then goes on to
-    # score responses against a number the golden no longer claims.
-    corrected_vtext = (audit.corrected_verifiers or "").strip()
-    vparse = parse_verifiers(corrected_vtext or verifiers_text)
-    if corrected_vtext and vparse.records:
-        res.corrected_verifiers_applied = True
-    elif corrected_vtext:
-        # emitted but unparseable — fall back and say so rather than losing it
-        vparse = parse_verifiers(verifiers_text)
-        res.verifier_change_audit = dict(res.verifier_change_audit or {})
-        res.verifier_change_audit["parse_failed"] = True
-    aug_text, all_vs = _merge_verifiers(vparse.records, aug.get("augmented_verifiers", []))
-    res.augmented_verifiers_text = aug_text
+    # --- Stage 3: verifier set is ALREADY FINAL (from the auditor, 1b) -------
+    # The auditor ran the property audit and froze the targets from text, so the
+    # verifier set arrives atomic and split. Augment may only EXTEND it with new
+    # verifiers for gold values nothing yet covers; it never re-splits or
+    # re-authors. This is what removes the Call-2 -> augment -> property-audit
+    # cycle: augment consumes a final set instead of producing one.
+    # The finalized set carries SUFFIXED ids (V3a, V3b from splits). parse_verifiers
+    # extracts an INTEGER index, so it would turn "V3a: ..." into id="V3",
+    # text="a: ..." — mangling every split child (observed: canonical showed
+    # "V3: a: ..." and the report could not find V3a). _verifiers_from_text keys on
+    # the full "V\d+[a-z]?" id, so suffixed children survive intact.
+    base_vs = _verifiers_from_text(
+        audit.final_verifiers_text or verifiers_text)
+    # merge in any augment-added verifiers (extension only; ids that already
+    # exist are ignored so augment can never overwrite a finalized verifier)
+    existing = {v["id"] for v in base_vs}
+    added = []
+    for av in (aug.get("augmented_verifiers", []) or []):
+        vid = str(av.get("id") or "").strip()
+        txt = str(av.get("text") or "").strip()
+        if txt and vid and vid not in existing:
+            added.append({"id": vid, "text": txt})
+            existing.add(vid)
+    all_vs = base_vs + added
+    res.augmented_verifiers_added = [v["id"] for v in added]
+    res.corrected_verifiers_applied = bool(audit.final_verifiers_text)
+    res.augmented_verifiers_text = format_verifiers_ids(all_vs)
     valid_ids = {v["id"] for v in all_vs}
 
+    # carry over the auditor's property-audit + split log so the report and the
+    # temporal/coverage gates see them
+    res.verifier_audit = dict(audit.verifier_audit or {})
+    res.verifier_splits_applied = list(audit.verifier_splits_applied or [])
+    res.verifier_rewrites_applied = list(audit.verifier_rewrites_applied or [])
+    res.target_grammar_problems = list(audit.target_grammar_problems or [])
+
     # --- frozen scoring targets ---------------------------------------------
-    # DERIVED FROM THE VERIFIER TEXT, not taken from the model's separate
-    # emission. The text already carries the standard — the `toleranced` property
-    # obliges it to — so a second copy is not a second standard, it is an index
-    # over the first, and the two can drift.
-    #
-    # They did. On one task the augment call rewrote all 14 verifiers, reassigning
-    # which quantity each id carries, while emitting expected_values against the
-    # OLD mapping: V4's text said 15,967.90 and its target held 28,329.84, V5 said
-    # 18,374.82 and held 15,967.90, and so on down the chain. Every numeric crux
-    # verifier scored a different quantity than it stated. audit_verifier_changes
-    # flagged 14 of 14 undeclared edits and the property call wrote "re-freeze
-    # target" 14 times; nothing acted on either. A target parsed from the text it
-    # describes cannot desynchronise from it.
+    # The auditor already froze targets from the verifier TEXT. Augment's separate
+    # expected_values emission is used ONLY for metadata (unit,
+    # source_of_verification) and for any augment-ADDED verifier, whose target has
+    # no auditor entry yet. The text-derived value+band always wins over the
+    # model's emission (they used to desynchronise — see the long note that used
+    # to live here; the fix, deriving from text, now lives in the auditor).
     from src.verifier_grammar import derive_expected_values
 
     emitted = {k: v for k, v in (aug.get("expected_values") or {}).items()
                if k in valid_ids}
-    derived, grammar_problems = derive_expected_values(
-        format_verifiers_ids(all_vs))
-    res.target_grammar_problems = grammar_problems
-
-    merged, disagreed = {}, []
-    for vid in valid_ids:
-        dv, em = derived.get(vid), emitted.get(vid)
-        if dv:
-            # keep the emitted metadata (unit, source_of_verification) but the
-            # value and band come from the text
-            base = dict(em) if em else {}
+    merged = dict(audit.expected_values or {})           # auditor's frozen targets
+    # derive targets for augment-ADDED verifiers only (auditor never saw them)
+    if added:
+        derived_added, _ = derive_expected_values(
+            format_verifiers_ids(added))
+        for vid, dv in derived_added.items():
+            base = dict(emitted.get(vid) or {})
             base.update(dv)
-            if em and isinstance(em.get("value"), (int, float)) \
-                    and isinstance(dv.get("value"), (int, float)):
-                tol = max(abs(dv["value"]) * 0.02, abs(dv.get("tol") or 0), 0.5)
-                if abs(em["value"] - dv["value"]) > tol:
-                    disagreed.append({"verifier": vid, "emitted": em["value"],
-                                      "from_text": dv["value"],
-                                      "detail": ("the model's target and the "
-                                                 "verifier's own text name "
-                                                 "different quantities; the text "
-                                                 "wins")})
             merged[vid] = base
-        elif em:
-            # no readable target clause: keep what the model emitted, but say so
+    # fold augment metadata (unit / source_of_verification) onto existing targets
+    # without letting it move the value or band
+    for vid, em in emitted.items():
+        if vid in merged and isinstance(em, dict):
+            for meta in ("unit", "source_of_verification"):
+                if meta in em and meta not in merged[vid]:
+                    merged[vid][meta] = em[meta]
+        elif vid not in merged:
             merged[vid] = em
             res.targets_emitted_only.append(vid)
-    res.expected_values = merged
-    res.target_disagreements = disagreed
+    res.expected_values = {k: v for k, v in merged.items() if k in valid_ids}
+    res.crux_anchors_trap = [a for a in aug.get("trap_anchor_ids", [])
+                             if a in {v["id"] for v in all_vs}]
+    res.crux_anchors_expert = [a for a in aug.get("expert_anchor_ids", [])
+                               if a in {v["id"] for v in all_vs}]
 
-    # --- Stage 3: the graph is DERIVED from the trajectory ------------------
-    # The augmenter's asserted dag_edges is gone. It was one model's opinion,
-    # produced in the same reply that invented the verifiers, with nothing
-    # checking it — and it decided crux selection, weights and CHAIN. Given the
-    # trajectory the graph is computable, and computable means repeatable.
-    from src.derive_dag import (claim_graph, graph_health, map_verifiers_to_steps,
-                                derive_verifier_dag, step_coverage)
-
-    step_graph, step_nodes = claim_graph(
-        audit.corrected_claim_verdicts, audit.judgment_steps)
-    if not step_graph:
+    # --- Stage 4: PREVIEW freeze (DAG -> weights -> crux -> Shapley) ---------
+    # Authors no text; recomputes the scored structure from the final verifier
+    # set. This is a preview only: apply_decisions re-runs the identical routine
+    # on the SME-sealed artifacts, and that run is authoritative.
+    pkg = res.to_dict()
+    pkg["trap_anchor_ids"] = res.crux_anchors_trap
+    pkg["expert_anchor_ids"] = res.crux_anchors_expert
+    pkg = derive_frozen_graph(pkg)
+    # copy the derived fields back onto the dataclass
+    for k in ("step_graph", "step_graph_health", "verifier_to_step",
+              "verifier_mapping_report", "step_coverage", "dag", "dag_derived",
+              "dag_source", "base_weights", "amzn_weights", "depths",
+              "final_answer_verifiers", "crux_ids", "crux_anchors_trap",
+              "crux_anchors_expert", "crux_dropped_no_expected",
+              "crux_shapley_weights", "expected_values"):
+        if k in pkg:
+            setattr(res, k, pkg[k])
+    if not pkg.get("dag"):
         res.scoreable = False
         res.not_scoreable_reason = (
-            "no trajectory: call 2 produced no corrected claims, so there is "
-            "nothing to derive a dependency graph from")
+            pkg.get("not_scoreable_reason")
+            or "no dependency graph could be derived")
         res.error = res.not_scoreable_reason
         return res
-    res.step_graph = step_graph
-    res.step_graph_health = graph_health(step_graph, step_nodes)
-
-    vmap = map_verifiers_to_steps(
-        res.expected_values, {v["id"]: v.get("text", "") for v in all_vs},
-        step_nodes)
-    res.verifier_mapping_report = {
-        "n_mapped": len(vmap.verifier_to_step), "n_verifiers": len(all_vs),
-        "unmatched": vmap.unmatched, "ambiguous": vmap.ambiguous,
-        "near_misses": vmap.near_misses, "detail": vmap.detail}
-    frozen_map = dict(vmap.verifier_to_step)
-    res.step_coverage = step_coverage(step_nodes, step_graph, frozen_map)
-
-    # --- Stage 4: verifier property audit; rewrites AND splits both apply ----
-    if run_verifier_audit:
-        from src.verifier_audit import (audit_verifiers, apply_rewrites,
-                                        apply_splits)
-        va = audit_verifiers(
-            task_id=task_id, verifiers=all_vs,
-            expected_values=res.expected_values, step_nodes=step_nodes,
-            solution_logic=res.corrected_solution_logic,
-            sanity_check=res.corrected_sanity_check,
-            mapping_report=res.verifier_mapping_report,
-            coverage=res.step_coverage, verifier_to_step=frozen_map,
-            model=model_name)
-        res.verifier_audit = va.to_dict()
-        if not va.error:
-            if va.rewrites:
-                # keep the pre-rewrite text so an SME rejecting a rewrite can
-                # actually get the original back
-                res._verifiers_before_audit = [dict(v) for v in all_vs]
-                all_vs = apply_rewrites(all_vs, va.rewrites)
-                res.verifier_rewrites_applied = sorted(va.rewrites)
-            if va.splits:
-                # A split mints suffixed ids (V5 -> V5a, V5b) so the parent's
-                # lineage is readable and no existing id is renumbered. Everything
-                # downstream is a function of (verifiers, dag, targets), so it all
-                # recomputes below rather than needing patching.
-                all_vs, ev2, split_log = apply_splits(
-                    all_vs, va.splits, res.expected_values)
-                res.expected_values = ev2
-                res.verifier_splits_applied = split_log
-            valid_ids = {v["id"] for v in all_vs}
-            res.expected_values = {k: v for k, v in res.expected_values.items()
-                                   if k in valid_ids}
-            # re-map: split children are new verifiers and need placing
-            vmap = map_verifiers_to_steps(
-                res.expected_values,
-                {v["id"]: v.get("text", "") for v in all_vs}, step_nodes)
-            frozen_map = dict(vmap.verifier_to_step)
-            # a link the call resolved only ADDS; a deterministic value match wins
-            for vid, sid in va.tests_step.items():
-                if vid in valid_ids:
-                    frozen_map.setdefault(vid, sid)
-            res.verifier_mapping_report = {
-                "n_mapped": len(frozen_map), "n_verifiers": len(all_vs),
-                "unmatched": vmap.unmatched, "ambiguous": vmap.ambiguous,
-                "near_misses": vmap.near_misses, "detail": vmap.detail,
-                "resolved_by_audit": sorted(
-                    set(va.tests_step) & set(frozen_map) - set(vmap.verifier_to_step))}
-            res.step_coverage = step_coverage(step_nodes, step_graph, frozen_map)
-
-    res.augmented_verifiers_text = format_verifiers_ids(all_vs)
-    res.verifier_to_step = frozen_map
-    dag = derive_verifier_dag(step_graph, frozen_map,
-                              all_verifier_ids=[v["id"] for v in all_vs])
-    res.dag = dag
-    res.dag_derived = dag
-    res.dag_source = "derived"
-
-    if not dag:
-        res.scoreable = False
-        res.not_scoreable_reason = (
-            "no verifier could be placed on a derivation step, so no dependency "
-            "graph could be derived")
-        res.error = res.not_scoreable_reason
-        return res
-
-    dw, aw, depths = compute_weights(all_vs, dag)
-    res.base_weights = {k: v / 100.0 for k, v in dw.items()}
-    res.amzn_weights = aw
-    res.depths = depths
-
-    # --- Stage 4: deterministic crux selection (expected-value filtered) ---
-    trap_anchors = [a for a in aug.get("trap_anchor_ids", []) if a in valid_ids]
-    expert_anchors = [a for a in aug.get("expert_anchor_ids", []) if a in valid_ids]
-    res.final_answer_verifiers = final_answer_verifiers(
-        res.expected_values, res.verifier_to_step, res.step_graph)
-    sel = select_crux(all_vs, dag,
-                      trap_anchor_ids=trap_anchors or None,
-                      expert_anchor_ids=expert_anchors or None,
-                      expected_value_ids=list(res.expected_values.keys()),
-                      final_answer_ids=res.final_answer_verifiers)
-    res.crux_ids = sel.crux_ids
-    res.crux_anchors_trap = sel.anchors_trap
-    res.crux_anchors_expert = sel.anchors_expert
-    res.crux_dropped_no_expected = sel.dropped_no_expected
-
-    # --- Stage 5: crux-only Shapley ---
-    res.crux_shapley_weights = crux_shapley(
-        all_vs, dag, res.base_weights, res.crux_ids)
 
     # --- Scoreability gate: a crux verifier tied to an unresolved JUDGMENT_REQUIRED
     # question (source_of_verification == "judgment_flagged") means the task's

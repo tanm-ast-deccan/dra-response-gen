@@ -102,6 +102,11 @@ def _mean(*args):
 _FUNCS = {
     "sqrt": math.sqrt, "abs": abs, "min": min, "max": max,
     "round": round, "sum": sum, "pow": pow, "log": math.log, "exp": math.exp,
+    # ceil/floor were missing, so a round-UP — required-FTE, headcount, batch
+    # sizing, any "round up to the next whole unit" — had no way to be expressed
+    # and the model emitted an unevaluable operation. Same failure class as the
+    # median/mean gap above: correct arithmetic reported UNVERIFIABLE, gate blocks.
+    "ceil": lambda x: float(math.ceil(x)), "floor": lambda x: float(math.floor(x)),
     "median": _median, "mean": _mean, "average": _mean, "avg": _mean,
     "count": lambda *a: float(len(_flat(a))), "len": lambda *a: float(len(_flat(a))),
 }
@@ -134,10 +139,37 @@ def normalize_expr(expr: str) -> str:
     return e
 
 
+def _sanitize_reserved_names(expr: str, variables: Dict[str, float]):
+    """Rename any variable whose name is a Python keyword so ast.parse can read it.
+
+    A claim written the natural way — operation "lambda / mu" with inputs named
+    lambda and mu — parses as a broken lambda-expression and fails with "invalid
+    syntax", so a correct division came back UNVERIFIABLE and the gate blocked.
+    Greek-letter and reserved names are common in real tasks (lambda in queueing,
+    is/in/for as ad-hoc names), so rewrite each reserved name to a safe alias in
+    BOTH the expression and the variable dict. Word-boundary matched so a variable
+    like "lambda_peak" is untouched. The value is unchanged, so a valid expression
+    keeps its value; only an unparseable-but-intended one becomes readable.
+    """
+    import keyword
+    if not variables:
+        return expr, variables
+    e, out = expr or "", {}
+    for name, val in variables.items():
+        if keyword.iskeyword(name):
+            alias = f"_kw_{name}"
+            e = re.sub(rf"\b{re.escape(name)}\b", alias, e)
+            out[alias] = val
+        else:
+            out[name] = val
+    return e, out
+
+
 def safe_eval(expr: str, variables: Dict[str, float]) -> float:
     """Evaluate an arithmetic expression over the given variables. Raises
     UnsafeExpression for anything outside arithmetic + whitelisted functions."""
     expr = normalize_expr(expr)
+    expr, variables = _sanitize_reserved_names(expr, variables)
     try:
         tree = ast.parse(expr, mode="eval")
     except SyntaxError as e:
@@ -265,6 +297,13 @@ class ArithmeticClaim:
     claimed_result: Any
     trap_value: Any = None
     notes: str = ""
+    #: How this claim's value is established. "arithmetic" (default) means the
+    #: operation is a whitelisted expression this module recomputes. A value that
+    #: is correct but produced by a method OUTSIDE arithmetic — a queueing formula
+    #: (Erlang-C M/M/c wait), an integral, a simulation, a solver — is marked
+    #: non-arithmetic so an empty/absent operation is not misread as a slip. Such a
+    #: claim is recorded and trusted, not recomputed, and does not block the gate.
+    source_of_verification: str = "arithmetic"
 
     @staticmethod
     def from_dict(d: dict) -> "ArithmeticClaim":
@@ -282,6 +321,9 @@ class ArithmeticClaim:
             claimed_result=d.get("claimed_result"),
             trap_value=d.get("trap_value"),
             notes=str(d.get("notes", "")),
+            source_of_verification=str(
+                d.get("source_of_verification")
+                or d.get("verification_method") or "arithmetic").lower(),
         )
 
 
@@ -479,6 +521,22 @@ def verify_claim(
     trap = parse_number(claim.trap_value)
 
     # --- A-layer: arithmetic re-evaluation --------------------------------
+    # A claim whose value is produced OUTSIDE arithmetic (a queueing formula, an
+    # integral, a solver) declares itself non-arithmetic. Its operation is
+    # legitimately absent, so do not misread that as a slip or block the gate on
+    # it: record the claimed value, mark it NOT_ARITHMETIC, and move on. It is
+    # verified by other means (source file, judgment, or an accepted formula), not
+    # by this module.
+    _nonarith = {"non_arithmetic", "nonarithmetic", "not_arithmetic", "formula",
+                 "source_file", "llm_judgment", "judgment", "external"}
+    if (claim.source_of_verification or "").lower() in _nonarith:
+        return ClaimVerdict(
+            id=claim.id, label=claim.label, status="NOT_ARITHMETIC",
+            claimed=claimed, recomputed=claimed,
+            detail=(f"value established by {claim.source_of_verification}, not "
+                    f"arithmetic; recorded and trusted, not recomputed"),
+            input_provenance=provenance,
+        )
     if not claim.operation.strip():
         return ClaimVerdict(
             id=claim.id, label=claim.label, status="UNVERIFIABLE",
