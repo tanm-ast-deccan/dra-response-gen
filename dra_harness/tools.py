@@ -685,15 +685,23 @@ def _search_in_file(path: str, query: str, context_lines: int = 3) -> str:
     if not os.path.isfile(path):
         return f"[error] file not found: {path}"
 
-    # Extract text first (reuse read_file logic for non-text formats)
+    # Extract text first (reuse read_file logic for non-text formats).
+    # CRITICAL: pass max_chars=0 for a LOSSLESS extraction. read_file's default
+    # 100K-char cap is meant to protect the MODEL's context on a full read — but
+    # here we are SEARCHING, and the search result is separately capped at 15K
+    # below. If we inherited the 100K cap, a match past the first ~30-50 pages of
+    # a large PDF would be silently truncated away before the search ran, and the
+    # tool would report "no matches" for data that is actually in the file — a
+    # false negative the model cannot detect. Search the whole file; cap the
+    # OUTPUT, not the input.
     ext = os.path.splitext(path)[1].lower()
     try:
         if ext in (".xlsx", ".xls"):
-            text = _read_file(path)
+            text = _read_file(path, max_chars=0)
         elif ext == ".pdf":
-            text = _read_file(path)
+            text = _read_file(path, max_chars=0)
         elif ext == ".docx":
-            text = _read_file(path)
+            text = _read_file(path, max_chars=0)
         else:
             with open(path, "r", encoding="utf-8", errors="replace") as f:
                 text = f.read()
@@ -717,18 +725,39 @@ def _search_in_file(path: str, query: str, context_lines: int = 3) -> str:
     if not matches:
         return f"No matches for '{query}' in {os.path.basename(path)}"
 
-    header = f"Found {len(matches)} match(es) for '{query}' in {os.path.basename(path)}:\n\n"
-    return (header + "\n\n".join(matches))[:15000]
+    total = len(matches)
+    header = (f"Found {total} match(es) for '{query}' in "
+              f"{os.path.basename(path)}:\n\n")
+    body = header + "\n\n".join(matches)
+    if len(body) <= 15000:
+        return body
+    # Too many/large matches to return in full. Rather than cut mid-match with no
+    # signal, keep whole matches up to the cap and tell the model exactly how many
+    # were omitted, so it can narrow the query or page through instead of assuming
+    # it saw everything.
+    kept, acc = [], len(header)
+    for m in matches:
+        if acc + len(m) + 2 > 15000:
+            break
+        kept.append(m)
+        acc += len(m) + 2
+    omitted = total - len(kept)
+    note = (f"\n\n[... {omitted} more match(es) not shown (output capped). "
+            f"Narrow the query or use read_file with max_chars to target a "
+            f"specific region.]")
+    return header + "\n\n".join(kept) + note
 
 
-# ─── Web search (DuckDuckGo, no API key needed) ──────────────────────────────
+# ─── Web search (Serper/Google primary, DuckDuckGo fallback) ─────────────────
 
 @register_tool(
     name="web_search",
     description=(
-        "Search the web using DuckDuckGo and return the top results with "
-        "titles, URLs, and snippets. Use for finding current data, verifying "
-        "facts, or retrieving external information not in the provided files."
+        "Search the web and return top results (titles, URLs, snippets).\n\n"
+        "Uses Google (via Serper) when SERPER_API_KEY is set — far better on "
+        "institutional/government/data sources — and falls back to DuckDuckGo "
+        "otherwise or if Serper returns nothing. Use for finding current data, "
+        "verifying facts, or retrieving external information not in the files."
     ),
     parameters={
         "type": "object",
@@ -747,6 +776,61 @@ def _search_in_file(path: str, query: str, context_lines: int = 3) -> str:
     },
 )
 def _web_search(query: str, max_results: int = 5) -> str:
+    """Serper (Google) primary, DuckDuckGo fallback.
+
+    Route is decided by SERPER_API_KEY: when set, Serper is tried first; on a
+    missing key, empty result set, or ANY Serper error we fall through to DDG.
+    Every fallback is LOGGED (logger 'dra.tools') so a Serper outage or key
+    problem is visible in the run logs rather than silently degrading search
+    quality — DDG returns far weaker results on institutional/government/data
+    queries, which is exactly where DRA tasks need the web.
+    """
+    serper_key = os.environ.get("SERPER_API_KEY")
+    if serper_key:
+        try:
+            out = _web_search_serper(query, max_results, serper_key)
+            if out:
+                return out
+            logger.warning("web_search: Serper returned no results for %r — "
+                           "falling back to DuckDuckGo", query)
+        except Exception as e:                                  # noqa: BLE001
+            logger.warning("web_search: Serper failed (%s) for %r — falling "
+                           "back to DuckDuckGo", e, query)
+    else:
+        logger.info("web_search: SERPER_API_KEY not set — using DuckDuckGo")
+    return _web_search_ddg(query, max_results)
+
+
+def _web_search_serper(query: str, max_results: int, api_key: str) -> str:
+    """Google results via Serper (https://google.serper.dev/search). Returns a
+    formatted string, or "" when Serper yields no organic results (so the caller
+    falls back to DDG). Raises on transport/HTTP errors (caller logs + falls
+    back)."""
+    import requests
+
+    resp = requests.post(
+        "https://google.serper.dev/search",
+        headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+        json={"q": query, "num": max_results},
+        timeout=20,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    organic = data.get("organic", []) or []
+    if not organic:
+        return ""
+    parts = []
+    for i, r in enumerate(organic[:max_results], 1):
+        parts.append(
+            f"[{i}] {r.get('title', 'No title')}\n"
+            f"    URL: {r.get('link', 'N/A')}\n"
+            f"    {r.get('snippet', 'No snippet')}"
+        )
+    return "\n\n".join(parts)
+
+
+def _web_search_ddg(query: str, max_results: int = 5) -> str:
+    """DuckDuckGo fallback (no API key needed)."""
     try:
         from duckduckgo_search import DDGS
     except ImportError:

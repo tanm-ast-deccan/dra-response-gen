@@ -36,14 +36,35 @@ logger = logging.getLogger("dra.provider")
 # Slugs are placeholders for sensible current models; change freely.
 
 MODEL_REGISTRY: dict[str, dict] = {
-    "claude": {"slug": "anthropic/claude-sonnet-4-6",     "supports_tools": True},
-    "openai": {"slug": "openai/gpt-5",                    "supports_tools": True},
-    "gemini": {"slug": "google/gemini-3-flash",     "supports_tools": True},
-    "qwen":   {"slug": "qwen/qwen3.6-27b",      "supports_tools": True},
-    "hunyuan": {"slug": "tencent/hy3",                      "supports_tools": True},
-    "doubao":  {"slug": "doubao-seed-2-1-pro-260628",       "supports_tools": True,
-                "base_url": "https://api.cometapi.com/v1",
-                "api_key_env": "COMETAPI_KEY"},
+    # ── Tier 1 — frontier closed (capability ceiling) ────────────────────────
+    "opus5":       {"slug": "anthropic/claude-opus-5",        "supports_tools": True},
+    "gpt56_sol":   {"slug": "openai/gpt-5.6-sol",             "supports_tools": True},
+    "gemini31_pro": {"slug": "google/gemini-3.1-pro-preview", "supports_tools": True},
+    "grok46":      {"slug": "x-ai/grok-4.6",                  "supports_tools": True},
+
+    # ── Tier 2 — balanced closed (production price/latency) ───────────────────
+    "gpt56_terra": {"slug": "openai/gpt-5.6-terra",           "supports_tools": True},
+    "sonnet":      {"slug": "anthropic/claude-sonnet-5",      "supports_tools": True},
+
+    # ── Tier 3 — open-weight frontier (cost floor / self-host / Tencent) ──────
+    "deepseek_v4_flash": {"slug": "deepseek/deepseek-v4-flash", "supports_tools": True},
+    "kimi_k3":     {"slug": "moonshotai/kimi-k3",             "supports_tools": True},
+    "glm52":       {"slug": "z-ai/glm-5.2",                   "supports_tools": True},
+    "qwen":        {"slug": "qwen/qwen3.6-35b-a3b",           "supports_tools": True},
+    "qwen27b":     {"slug": "qwen/qwen3.6-27b",              "supports_tools": True},
+
+    # ── Incumbent reference slot (Tencent deal context) — Model_A / Model_B ───
+    # Kept as fixed reference generators regardless of leaderboard rank.
+    "hunyuan":     {"slug": "tencent/hy3",                    "supports_tools": True},
+    "doubao":      {"slug": "doubao-seed-2-1-pro-260628",     "supports_tools": True,
+                    "base_url": "https://api.cometapi.com/v1",
+                    "api_key_env": "COMETAPI_KEY"},
+
+    # ── Legacy aliases (so older configs / CLI that say "claude"/"openai"/"gemini"
+    #    keep working; they point at the current tier for that vendor). ─────────
+    "claude":      {"slug": "anthropic/claude-opus-5",        "supports_tools": True},
+    "openai":      {"slug": "openai/gpt-5.6-sol",             "supports_tools": True},
+    "gemini":      {"slug": "google/gemini-3.1-pro-preview",  "supports_tools": True},
 }
 
 def driver_for(provider: str, dry_run: bool = False) -> "OpenRouterDriver":
@@ -84,6 +105,49 @@ class ChatResponse:
     output_tokens: int = 0
     cost_usd: float = 0.0
     finish_reason: str = ""
+
+
+def _extract_text(msg) -> str:
+    """Pull the assistant's visible text out of an OpenAI-compatible message,
+    robustly across providers. Three shapes seen on OpenRouter:
+      1. content is a plain string (OpenAI, Anthropic) — use it.
+      2. content is a LIST of parts [{type:'text', text:...}] (Gemini, others) —
+         concatenate the text parts.
+      3. content is empty/None but a THINKING model answered during reasoning
+         (DeepSeek, GLM, Kimi, Qwen, Gemini w/ reasoning_effort) — the visible
+         text is in 'reasoning' / 'reasoning_content'. Fall back to it, so the
+         turn is not silently empty (nonzero output tokens but text == "").
+    Falls back to reasoning ONLY when content is genuinely empty, so a real
+    answer is never overwritten by the thinking trace.
+    """
+    content = getattr(msg, "content", None)
+    if isinstance(content, str) and content.strip():
+        return content
+    if isinstance(content, list):
+        parts = []
+        for p in content:
+            if isinstance(p, dict):
+                t = p.get("text") or p.get("content") or ""
+            else:
+                t = getattr(p, "text", "") or getattr(p, "content", "") or ""
+            if t:
+                parts.append(t)
+        if parts:
+            return "\n".join(parts)
+    for attr in ("reasoning_content", "reasoning"):
+        r = getattr(msg, attr, None)
+        if isinstance(r, str) and r.strip():
+            return r
+        if isinstance(r, list):
+            rp = []
+            for x in r:
+                t = (x.get("text") if isinstance(x, dict)
+                     else getattr(x, "text", None))
+                if t:
+                    rp.append(t)
+            if rp:
+                return "\n".join(rp)
+    return content if isinstance(content, str) else ""
 
 
 # ─── The driver ───────────────────────────────────────────────────────────────
@@ -194,7 +258,7 @@ class OpenRouterDriver:
             return out
 
         msg = choice.message
-        out.text = getattr(msg, "content", "") or ""
+        out.text = _extract_text(msg)
         out.finish_reason = getattr(choice, "finish_reason", "") or ""
 
         # Tool calls
@@ -234,7 +298,7 @@ class OpenRouterDriver:
     @staticmethod
     def _assistant_message_dict(msg) -> dict:
         """Rebuild the assistant message as a dict for message history."""
-        d: dict = {"role": "assistant", "content": getattr(msg, "content", "") or ""}
+        d: dict = {"role": "assistant", "content": _extract_text(msg)}
         tool_calls = getattr(msg, "tool_calls", None) or []
         if tool_calls:
             d["tool_calls"] = []

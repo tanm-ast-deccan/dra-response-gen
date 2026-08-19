@@ -113,7 +113,15 @@ class GenParams:
 
 # ─── Top-level pipeline config ────────────────────────────────────────────────
 
-DEFAULT_PROVIDERS = ["claude", "openai", "gemini", "qwen"]
+DEFAULT_PROVIDERS = [
+    # candidate models under test (all via OpenRouter → uniform local tools)
+    "opus5", "gpt56_sol", "gemini31_pro", "grok46",       # frontier closed
+    "gpt56_terra", "sonnet",                              # balanced closed
+    "deepseek_v4_flash", "kimi_k3", "glm52", "qwen",      # open weight
+]
+# Reference generators (Model_A / Model_B for the golden) — run these SEPARATELY,
+# not mixed into a candidate sweep: providers=REFERENCE_PROVIDERS on that run.
+REFERENCE_PROVIDERS = ["hunyuan", "doubao"]
 
 
 @dataclass
@@ -144,7 +152,19 @@ class PipelineConfig:
     defaults: GenParams = field(default_factory=GenParams)
     # Qwen 27B emits empty output at temp=1.0; it needs 0.3 for agentic tasks.
     agent_overrides: dict = field(
-        default_factory=lambda: {"qwen": {"temperature": 0.3}}
+        default_factory=lambda: {
+            # Qwen emits empty output at temp=1.0; needs 0.3 for agentic tasks.
+            "qwen": {"temperature": 0.3},
+            # Opus 5 and Sonnet 5 now default reasoning ON; GPT-5.6 is thinking-
+            # heavy too. On long agentic loops, "high" effort can run away on
+            # cost. Start at "medium" and raise only if quality drops on a real
+            # task. Sol also emits up to 128K — lift its cap for long deliverables.
+            "opus5":      {"reasoning_effort": "medium"},
+            "sonnet":     {"reasoning_effort": "medium"},
+            "gpt56_sol":  {"reasoning_effort": "medium", "max_tokens": 64000},
+            "gpt56_terra": {"reasoning_effort": "medium"},
+            "qwen27b": {"temperature": 0.3},
+        }
     )   # {provider: {field: val}}
     model_overrides: dict = field(default_factory=dict)   # {provider: "slug"}
 
