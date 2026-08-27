@@ -34,6 +34,42 @@ from collections import defaultdict
 
 SWEEP = [0.6, 0.4, 0.2, 0.0]
 
+# CHAIN uses (depth+1)^2 depth-derived weights, NOT the Shapley vector. depth is
+# the longest path to a root in the FULL dag (same definition build_final_csv and
+# the crystallizer use). This is a distinct metric from the Shapley-weighted GEAR;
+# conflating the two was the scoring bug — gear_score used the Shapley `weights`
+# field for both, so the CHAIN column was never actually (depth+1)^2-weighted.
+CHAIN_ALPHA = 2
+
+
+def dag_depths(dag):
+    """Longest-path depth to a root for every node in the full dag. depth(root)=0.
+    Matches derive_dag / verifier_weights so CHAIN weights are recomputable from
+    the same graph the crystallizer used."""
+    memo = {}
+
+    def depth(n, stack):
+        if n in memo:
+            return memo[n]
+        if n in stack:            # cycle guard; a cyclic edge contributes no depth
+            return 0
+        stack.add(n)
+        deps = [d for d in dag.get(n, []) if d in dag]
+        d = max((depth(p, stack) + 1 for p in deps), default=0)
+        stack.discard(n)
+        memo[n] = d
+        return d
+
+    return {n: depth(n, set()) for n in dag}
+
+
+def chain_weights(crux, depths, alpha=CHAIN_ALPHA):
+    """CHAIN weights over the crux set: (depth+1)^alpha, alpha=2, normalized to 1.0.
+    Deeper verifiers (further along the derivation) weigh more."""
+    raw = {v: (int(depths.get(v, 0)) + 1) ** alpha for v in crux}
+    tot = sum(raw.values()) or 1.0
+    return {v: w / tot for v, w in raw.items()}
+
 
 def ancestors_ok(dag):
     """topological order of crux nodes; returns ordering (parents before children)."""
@@ -130,10 +166,17 @@ def main():
             rows.append(dict(task_id=task, model=model, status="no augment"))
             continue
         dag, weights, crux, sov = A["dag"], A["weights"], A["crux"], A.get("sov", {})
+        # depths for CHAIN: prefer the stored vector (what the crystallizer used),
+        # else derive from the dag. CHAIN weights = (depth+1)^2, NOT the Shapley
+        # `weights` field — these are two different metrics.
+        depths = A.get("depths") or dag_depths(dag)
         dr = drop.get(task, set())
+        cw = chain_weights([v for v in crux if v not in dr], depths)
         flat = flat_score(marks, weights, crux)
         flat_dropped = flat_score(marks, weights, crux, dr) if dr else flat
         _, g = gear_scores(marks, dag, weights, crux, sov, a.lam, a.lam_mode, dr)
+        # CHAIN is the hard DAG gate (lam=0) under (depth+1)^2 weights.
+        _, chain = gear_scores(marks, dag, cw, crux, sov, 0.0, "uniform", dr)
         sweep = {}
         for L in SWEEP:
             _, s = gear_scores(marks, dag, weights, crux, sov, L, a.lam_mode, dr)
@@ -143,11 +186,12 @@ def main():
             n_crux=len(crux), n_dropped=len(dr),
             flat=round(100*flat, 1),
             flat_trivia_removed=round(100*flat_dropped, 1),
+            chain=round(100*chain, 1),
             gear=round(100*g, 1),
             **{f"gear_lam{L}": round(100*sweep[L], 1) for L in SWEEP}))
 
     cols = ["task_id","model","status","n_crux","n_dropped","flat",
-            "flat_trivia_removed","gear"] + [f"gear_lam{L}" for L in SWEEP]
+            "flat_trivia_removed","chain","gear"] + [f"gear_lam{L}" for L in SWEEP]
     with open(a.out, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=cols); w.writeheader()
         for r in rows:
@@ -155,9 +199,9 @@ def main():
 
     ok = [r for r in rows if r.get("status") == "ok"]
     print(f"scored {len(ok)}/{len(rows)} runs (lambda={a.lam}, mode={a.lam_mode}) -> {a.out}\n")
-    print(f"{'task':<17}{'model':<9}{'flat':>6}{'gear':>7}{'l0.6':>6}{'l0.4':>6}{'l0.2':>6}{'l0.0':>6}")
+    print(f"{'task':<17}{'model':<9}{'flat':>6}{'chain':>7}{'gear':>7}{'l0.6':>6}{'l0.4':>6}{'l0.2':>6}{'l0.0':>6}")
     for r in ok:
-        print(f"{r['task_id']:<17}{r['model']:<9}{r['flat']:>6}{r['gear']:>7}"
+        print(f"{r['task_id']:<17}{r['model']:<9}{r['flat']:>6}{r['chain']:>7}{r['gear']:>7}"
               f"{r['gear_lam0.6']:>6}{r['gear_lam0.4']:>6}{r['gear_lam0.2']:>6}{r['gear_lam0.0']:>6}")
     # per-model aggregate at chosen lambda
     print("\n=== per-model mean (chosen lambda) ===")

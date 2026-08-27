@@ -41,9 +41,9 @@ def build_tasks(packages, cfg: PipelineConfig) -> list[Task]:
         for provider in cfg.providers:
             slug = resolve_slug(provider, cfg.model_for(provider))
             for p in range(1, cfg.passes_per_provider + 1):
-                run_dir = os.path.join(
+                run_dir = os.path.abspath(os.path.join(
                     cfg.staging_dir, pkg.task_id, "runs", f"{provider}__p{p}"
-                )
+                ))
                 tasks.append(Task(
                     task_id=pkg.task_id,
                     prompt=pkg.prompt,

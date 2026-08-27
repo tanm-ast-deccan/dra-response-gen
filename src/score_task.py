@@ -11,12 +11,13 @@ Path resolution for output_files is tolerant of renamed staging folders.
 
 from __future__ import annotations
 
-import json, os, re, glob, logging
+import json, os, re, glob, logging, math
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Any
 
 from src.prompt_evaluator import _call_llm, DEFAULT_JUDGE_MODEL, _repair_and_parse_json
 from src.crux_shapley import score_crux, CruxMetrics
+from gear_score import gear_scores, chain_weights, dag_depths
 
 logger = logging.getLogger("dra.score")
 
@@ -150,6 +151,14 @@ class ScoreResult:
     n_passed: int = 0
     n_unobserved: int = 0
 
+    # CHAIN = (depth+1)^2-weighted DAG-gated crux score; GEAR0 = -log(shapley)-
+    # weighted DAG-gated crux score. Both at lambda=0 (hard gate), 0-100. These are
+    # the headline metrics the report uses and were previously not computed here:
+    # score_task emitted only the flat pass-ratio and raw-shapley score.
+    chain: float = 0.0
+    gear_lambda0: float = 0.0
+    crux_passed_ids: List[str] = field(default_factory=list)
+
     n_unobservable: int = 0          # FAILs whose cause was "not stated at all"
 
     # all-verifier companion (crux metrics above stay the headline)
@@ -167,6 +176,10 @@ class ScoreResult:
                                      # least-bad one was scored anyway
     dropped_as_scratch: List[str] = field(default_factory=list)
     file_classifications: List[dict] = field(default_factory=list)
+    # Explicit, audit-facing record of WHICH files were opened and scored vs
+    # rejected and why — the disambiguation a human grader would state. Each entry:
+    # {"file","role":"graded|rejected","score","reason"}.
+    graded_files: List[dict] = field(default_factory=list)
     deliverable_chars: int = 0
     deliverable_truncated: bool = False
     not_found: bool = False
@@ -375,6 +388,45 @@ def _file_label(path: str, used: Dict[str, int]) -> str:
     return f"{base} [{parent}]"
 
 
+def _neglog_from_shapley(shapley: Dict[str, float], crux_ids: List[str]) -> Dict[str, float]:
+    """-log(shapley) over the crux set, normalized. Raw Shapley is root-heavy by
+    construction; the -log inversion redistributes weight toward the leaves, which
+    is the intended GEAR weighting. A zero/absent shapley falls back to uniform."""
+    raw = {}
+    for v in crux_ids:
+        s = shapley.get(v, 0.0) or 0.0
+        # guard: -log needs 0<s<1; clamp into range so a stored 0 or 1 is finite
+        s = min(max(float(s), 1e-9), 1 - 1e-9)
+        raw[v] = -math.log(s)
+    tot = sum(raw.values()) or 1.0
+    return {v: w / tot for v, w in raw.items()}
+
+
+def compute_chain_gear(crux_ids: List[str],
+                       crux_dag: Dict[str, list],
+                       depths: Dict[str, int],
+                       neglog: Dict[str, float],
+                       shapley: Dict[str, float],
+                       results: Dict[str, bool]) -> dict:
+    """CHAIN and GEAR0 for a crux verdict set, using the SAME engine gear_score.py
+    uses. CHAIN = (depth+1)^2 weights; GEAR0 = -log(shapley) weights; both DAG-gated
+    at lambda=0. Falls back to a derived DAG / derived neglog when the package
+    predates those fields, so the metric is always computed rather than skipped."""
+    dag = crux_dag or {v: [] for v in crux_ids}
+    # keep the dag restricted to crux nodes (the metric is defined on the crux subgraph)
+    dag = {v: [p for p in dag.get(v, []) if p in crux_ids] for v in crux_ids}
+    dep = depths or dag_depths(dag)
+    nl = neglog or _neglog_from_shapley(shapley, crux_ids)
+    marks = {v: (1 if results.get(v) else 0) for v in crux_ids}
+    cw = chain_weights(crux_ids, dep)
+    _, chain = gear_scores(marks, dag, cw, crux_ids, {}, 0.0, "uniform")
+    _, gear0 = gear_scores(marks, dag, nl, crux_ids, {}, 0.0, "uniform")
+    passed = [v for v in crux_ids if results.get(v)]
+    return {"chain": round(100 * chain, 2),
+            "gear_lambda0": round(100 * gear0, 2),
+            "crux_passed_ids": passed}
+
+
 def score_task(
     augmented: dict,
     response: dict,
@@ -404,6 +456,12 @@ def score_task(
     crux_ids = _j("crux_verifier_ids", [])
     shapley = _j("crux_shapley_weights_json", {})
     expected = _j("expected_values_json", {})
+    # For CHAIN/GEAR0 we need the crux DAG, depths, and the -log(shapley) vector.
+    # All are frozen package fields; each has a safe fallback so the grader still
+    # runs on older packages that predate them.
+    crux_dag = _j("crux_dag_json", {}) or _j("dag_json", {})
+    depths = _j("depths_json", {}) or _j("crux_depth_json", {})
+    neglog = _j("neglog_shapley_json", {}) or _j("neglog_crux_json", {})
     # verifier text map for the grader prompt
     verifiers_text = augmented.get("augmented_verifiers", "") or ""
     vtext = {}
@@ -469,6 +527,24 @@ def score_task(
     kept, dropped, res.scratch_fallback, res.file_classifications = \
         select_by_content(extracted)
     res.dropped_as_scratch = [os.path.basename(d) for d in dropped]
+    # Explicit audit trail: which file(s) were graded, which rejected, and why.
+    # This is the disambiguation a human grader states out loud ("scored the named
+    # memo; rejected the convenience scratch file that only narrates the work").
+    _cls_by_name = {c["name"]: c for c in res.file_classifications}
+    kept_set = set(kept)
+    for c in res.file_classifications:
+        role = "graded" if c["name"] in kept_set else "rejected"
+        top_reason = (c.get("reasons") or ["(no signal)"])[0]
+        res.graded_files.append({
+            "file": os.path.basename(c["name"]),
+            "role": role,
+            "score": c["score"],
+            "reason": ("scored as deliverable" if role == "graded"
+                       else "rejected as scratch/non-deliverable")
+                      + f"; top signal: {top_reason}"
+                      + ("; FALLBACK: all files looked like scratch, least-bad scored"
+                         if res.scratch_fallback and role == "graded" else ""),
+        })
     by_path = dict(extracted)
     used: Dict[str, int] = {}
     texts = [f"### FILE: {_file_label(k, used)}\n" + by_path.get(k, "")
@@ -555,8 +631,15 @@ def score_task(
                   "source_of_verification": ev.get("source_of_verification", "")}
 
     # headline: crux metrics over the crux subset of the same verdict set
-    m = score_crux(crux_ids, shapley, {c: results.get(c, False) for c in crux_ids})
+    crux_results = {c: results.get(c, False) for c in crux_ids}
+    m = score_crux(crux_ids, shapley, crux_results)
     _fill(res, m)
+
+    # CHAIN + GEAR0 — the headline metrics the report uses, on the crux verdicts.
+    cg = compute_chain_gear(crux_ids, crux_dag, depths, neglog, shapley, crux_results)
+    res.chain = cg["chain"]
+    res.gear_lambda0 = cg["gear_lambda0"]
+    res.crux_passed_ids = cg["crux_passed_ids"]
 
     # companion: all-verifier figures
     res.n_unobservable = n_unobs
