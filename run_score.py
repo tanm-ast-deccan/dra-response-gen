@@ -37,8 +37,21 @@ SCORE_FIELDS = ["task_id", "provider", "model", "pass_index", "run_id",
 
 
 def load_augmented(path):
+    def _norm(s):
+        return "".join(ch for ch in str(s).lower() if ch.isalnum())
+    out = {}
     with open(path, encoding="utf-8-sig") as f:
-        return {r.get("task_id"): r for r in csv.DictReader(f)}
+        for r in csv.DictReader(f):
+            # tolerate 'task_id', 'Task ID', 'TASK_ID', etc. for the index key
+            tid = None
+            for k, v in r.items():
+                if _norm(k) == "taskid":
+                    tid = v
+                    break
+            if tid is None:
+                tid = r.get("task_id")
+            out[tid] = r
+    return out
 
 
 def load_responses(results_arg):
@@ -116,6 +129,14 @@ def main():
     ap.add_argument("--results-json", default=None, help="path or glob")
     ap.add_argument("--staging-remap", default="staging=staging_1",
                     help="rewrite stored staging folder segment: OLD=NEW (default staging=staging_1)")
+    ap.add_argument("--output-source", choices=["local", "gdrive"], default="local",
+                    help="where deliverables come from. 'local' (default): use "
+                         "output_files paths in the results JSON. 'gdrive': download "
+                         "each task's Drive output folder (link in the augmented CSV) "
+                         "to a temp dir, score, then clean up.")
+    ap.add_argument("--output-link-column", default="Output Files Drive Link",
+                    help="CSV column holding the per-task Drive output-folder link "
+                         "(used only with --output-source gdrive)")
     ap.add_argument("--out-dir", default=None)
     ap.add_argument("--model", default=None)
     ap.add_argument("--workers", type=int, default=None)
@@ -163,9 +184,28 @@ def main():
     configure_api()
     os.makedirs(cfg.out_dir_score, exist_ok=True)
 
+    out_src = None
+    if a.output_source == "gdrive":
+        from src.gdrive_output_source import GDriveOutputSource
+        out_src = GDriveOutputSource(column=a.output_link_column)
+
     def work(idx, resp):
-        return idx, score_task(aug[resp["task_id"]], resp,
-                               staging_remap=staging_remap, model_name=model)
+        aug_row = aug[resp["task_id"]]
+        link = None
+        r = resp
+        if out_src is not None:
+            link = out_src.link_for(aug_row)
+            # explicit local output_files in the results JSON win; only fall back
+            # to Drive when the response carries none.
+            if link and not resp.get("output_files"):
+                local = out_src.stage(link)
+                r = {**resp, "output_files": local}
+        try:
+            return idx, score_task(aug_row, r,
+                                   staging_remap=staging_remap, model_name=model)
+        finally:
+            if out_src is not None:
+                out_src.release(link)
 
     results_by_idx = {}
     with ThreadPoolExecutor(max_workers=max(1, cfg.workers)) as ex:

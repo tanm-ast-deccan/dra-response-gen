@@ -60,6 +60,33 @@ class DriveWriter:
     def __init__(self):
         self._svc = None
 
+    @staticmethod
+    def _exec(request, what="drive call", max_tries=6):
+        """Execute a Drive API request with exponential backoff on transient
+        rate-limit / server errors. Re-raises anything non-retryable, and
+        re-raises the last error if all retries are exhausted."""
+        import random
+        import time
+        from googleapiclient.errors import HttpError
+        RETRY_REASONS = {"userratelimitexceeded", "ratelimitexceeded",
+                         "backenderror", "internalerror"}
+        for attempt in range(max_tries):
+            try:
+                return request.execute()
+            except HttpError as e:
+                status = getattr(getattr(e, "resp", None), "status", None)
+                body = (getattr(e, "content", b"") or b"").decode("utf-8", "replace").lower()
+                reason_hit = any(r in body for r in RETRY_REASONS)
+                transient = status in (403, 429, 500, 503) and (reason_hit or status in (429, 500, 503))
+                if not transient or attempt == max_tries - 1:
+                    raise
+                # exp backoff: 2,4,8,16,32s (+jitter), capped
+                wait = min(2 ** (attempt + 1), 32) + random.uniform(0, 1.5)
+                print(f"   … {what}: {status} rate-limited, retry "
+                      f"{attempt+1}/{max_tries-1} in {wait:.1f}s", file=sys.stderr)
+                time.sleep(wait)
+        return None  # unreachable
+
     def _service(self):
         if self._svc is not None:
             return self._svc
@@ -88,18 +115,18 @@ class DriveWriter:
     def find_child_folder(self, parent_id: str, name: str):
         q = (f"'{parent_id}' in parents and name = {_q(name)} "
              f"and mimeType = '{FOLDER_MIME}' and trashed = false")
-        resp = self._service().files().list(
+        resp = self._exec(self._service().files().list(
             q=q, fields="files(id,name)", pageSize=10,
             supportsAllDrives=True, includeItemsFromAllDrives=True,
-        ).execute()
+        ), "find_folder")
         files = resp.get("files", [])
         return files[0]["id"] if files else None
 
     def create_folder(self, parent_id: str, name: str) -> str:
         meta = {"name": name, "mimeType": FOLDER_MIME, "parents": [parent_id]}
-        f = self._service().files().create(
+        f = self._exec(self._service().files().create(
             body=meta, fields="id", supportsAllDrives=True
-        ).execute()
+        ), "create_folder")
         return f["id"]
 
     def get_or_create_folder(self, parent_id: str, name: str) -> str:
@@ -110,12 +137,12 @@ class DriveWriter:
         out, token = [], None
         svc = self._service()
         while True:
-            resp = svc.files().list(
+            resp = self._exec(svc.files().list(
                 q=f"'{folder_id}' in parents and trashed = false",
                 fields="nextPageToken,files(id,name,size)",
                 pageToken=token, pageSize=100,
                 supportsAllDrives=True, includeItemsFromAllDrives=True,
-            ).execute()
+            ), "list_folder")
             out.extend(resp.get("files", []))
             token = resp.get("nextPageToken")
             if not token:
@@ -123,18 +150,18 @@ class DriveWriter:
         return out
 
     def delete(self, file_id: str):
-        self._service().files().delete(
-            fileId=file_id, supportsAllDrives=True).execute()
+        self._exec(self._service().files().delete(
+            fileId=file_id, supportsAllDrives=True), "delete")
 
     def upload(self, folder_id: str, local_path: str) -> str:
         from googleapiclient.http import MediaFileUpload
         name = os.path.basename(local_path)
         mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
         media = MediaFileUpload(local_path, mimetype=mime, resumable=True)
-        f = self._service().files().create(
+        f = self._exec(self._service().files().create(
             body={"name": name, "parents": [folder_id]},
             media_body=media, fields="id", supportsAllDrives=True,
-        ).execute()
+        ), "upload")
         return f["id"]
 
 
@@ -243,6 +270,10 @@ def main(argv=None):
                          "(default: skip files already present)")
     ap.add_argument("--dry-run", action="store_true",
                     help="discover + plan only; no Drive writes, no CSV changes")
+    ap.add_argument("--sleep", type=float, default=0.3,
+                    help="seconds to pause between file uploads, to stay under "
+                         "Google's per-user rate limit (default 0.3; raise to "
+                         "0.5-1.0 if you still hit userRateLimitExceeded)")
     args = ap.parse_args(argv)
 
     ref = parse_gdrive_reference(args.parent_folder)
@@ -264,55 +295,94 @@ def main(argv=None):
     if args.link_column not in fieldnames:
         fieldnames.append(args.link_column)
 
+    # Resume-safe: if the output CSV already exists (a prior/interrupted run),
+    # preload its links so tasks we skip this run keep their links instead of
+    # being blanked. Links are keyed by task_id.
+    out_path = args.out or _default_out(args.csv)
+    prior_links = {}
+    if os.path.exists(out_path):
+        try:
+            with open(out_path, encoding="utf-8-sig", newline="") as f:
+                for r in csv.DictReader(f):
+                    lk = (r.get(args.link_column) or "").strip()
+                    if r.get("task_id") and lk:
+                        prior_links[r["task_id"]] = lk
+            if prior_links:
+                print(f"resuming: {len(prior_links)} existing link(s) preloaded "
+                      f"from {out_path}")
+        except Exception as e:  # noqa: BLE001
+            print(f"(could not read existing {out_path}: {e})", file=sys.stderr)
+    for row in rows:
+        tid = (row.get("task_id") or "").strip()
+        if tid in prior_links and not (row.get(args.link_column) or "").strip():
+            row[args.link_column] = prior_links[tid]
+
     results = load_results(args.results_json)
     if not results:
         raise SystemExit("no usable results records found in --results-json")
 
     drive = None if args.dry_run else DriveWriter()
 
-    n_up = n_skip = n_task = 0
-    for row in rows:
-        tid = (row.get("task_id") or "").strip()
-        if not tid:
-            continue
-        records = results.get(tid)
-        if not records:
-            print(f"[{tid}] not in results JSON — leaving link blank")
-            continue
-        files = task_output_files(records, require_success=args.only_success)
-        if not files:
-            why = "no successful run" if args.only_success else "no output files"
-            print(f"[{tid}] {why} in results JSON — leaving link blank")
-            continue
-        n_task += 1
-        print(f"[{tid}] {len(files)} output file(s): "
-              + ", ".join(os.path.basename(p) for p in files))
+    def _flush_csv():
         if args.dry_run:
-            row[args.link_column] = "(dry-run)"
-            continue
-
-        folder_id = drive.get_or_create_folder(parent_id, tid)
-        existing = {e["name"]: e for e in drive.list_folder(folder_id)}
-        for p in files:
-            name = os.path.basename(p)
-            if name in existing:
-                if args.replace:
-                    drive.delete(existing[name]["id"])
-                else:
-                    n_skip += 1
-                    continue
-            drive.upload(folder_id, p)
-            n_up += 1
-        row[args.link_column] = folder_url(folder_id)
-        print(f"       → {folder_url(folder_id)}")
-
-    out_path = args.out or _default_out(args.csv)
-    if not args.dry_run:
-        with open(out_path, "w", encoding="utf-8", newline="") as f:
+            return
+        tmp = out_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8", newline="") as f:
             w = csv.DictWriter(f, fieldnames=fieldnames)
             w.writeheader()
             w.writerows(rows)
-        print(f"\nWrote {out_path}")
+        os.replace(tmp, out_path)  # atomic; a crash never leaves a half-file
+
+    n_up = n_skip = n_task = 0
+    try:
+        for row in rows:
+            tid = (row.get("task_id") or "").strip()
+            if not tid:
+                continue
+            records = results.get(tid)
+            if not records:
+                # keep any preloaded link; only note if there's genuinely none
+                if not (row.get(args.link_column) or "").strip():
+                    print(f"[{tid}] not in results JSON — no link")
+                continue
+            files = task_output_files(records, require_success=args.only_success)
+            if not files:
+                if not (row.get(args.link_column) or "").strip():
+                    why = "no successful run" if args.only_success else "no output files"
+                    print(f"[{tid}] {why} in results JSON — no link")
+                continue
+            n_task += 1
+            print(f"[{tid}] {len(files)} output file(s): "
+                  + ", ".join(os.path.basename(p) for p in files))
+            if args.dry_run:
+                row[args.link_column] = "(dry-run)"
+                continue
+
+            folder_id = drive.get_or_create_folder(parent_id, tid)
+            existing = {e["name"]: e for e in drive.list_folder(folder_id)}
+            for p in files:
+                name = os.path.basename(p)
+                if name in existing:
+                    if args.replace:
+                        drive.delete(existing[name]["id"])
+                    else:
+                        n_skip += 1
+                        continue
+                drive.upload(folder_id, p)
+                n_up += 1
+                if args.sleep:
+                    import time
+                    time.sleep(args.sleep)
+            # always set the link for a processed task (even if all files were
+            # skip-because-present — the folder exists and is the deliverable set)
+            row[args.link_column] = folder_url(folder_id)
+            print(f"       → {folder_url(folder_id)}")
+            _flush_csv()  # persist after each task so a crash keeps progress
+    finally:
+        _flush_csv()
+        if not args.dry_run:
+            print(f"\nWrote {out_path}")
+
     print(f"tasks with files : {n_task}")
     print(f"uploaded         : {n_up}")
     print(f"skipped (exists) : {n_skip}")
