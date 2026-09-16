@@ -179,12 +179,37 @@ def _tokens(s: str) -> Set[str]:
 
 
 def name_agreement(a: str, b: str) -> float:
+    """Token-overlap score between a verifier's text and a step's label.
+
+    Uses the CONTAINMENT (overlap) coefficient — |A∩B| / min(|A|,|B|) — not
+    Jaccard. A verifier legitimately carries more words than the terse step label
+    it tests ("Calculate baseline registration capacity using 3 executives, not
+    4" vs "Baseline registration capacity"), and Jaccard punishes that asymmetry:
+    the shared tokens are nearly all of the short label but a small fraction of
+    the union, so a correct match scored 0.25 and fell under NAME_MIN, leaving the
+    verifier unmapped even though its step was unambiguous. Containment measures
+    "how much of the smaller description is shared", which is the right question
+    for verifier→step matching and clears the real matches while still separating
+    the wrong ones (V7→C4 0.43 vs V7→C8 0.25).
+
+    A full subset still scores 1.0 (unchanged). A SINGLE shared token is weak
+    evidence — it can be one incidental word — so unless it is the entire smaller
+    side (a one-word label fully hit), a lone shared token is capped at 0.25 so it
+    cannot on its own clear NAME_MIN and cause a false map.
+    """
     ta, tb = _tokens(a), _tokens(b)
     if not ta or not tb:
         return 0.0
     if ta <= tb or tb <= ta:
         return 1.0
-    return len(ta & tb) / len(ta | tb)
+    inter = len(ta & tb)
+    if inter == 0:
+        return 0.0
+    smaller = min(len(ta), len(tb))
+    cont = inter / smaller
+    if inter < 2 and smaller > 1:
+        return min(cont, 0.25)
+    return cont
 
 
 NAME_MIN = 0.30

@@ -1,5 +1,6 @@
 # src/document_parser.py
 import os
+import re
 import warnings
 from pathlib import Path
 
@@ -48,10 +49,14 @@ def read_document(file_path: str) -> str:
         return _read_pptx(path)
     elif extension == ".json":
         return _read_json(path)
+    elif extension in (".html", ".htm"):
+        return _read_html(path)
+    elif extension == ".mht" or extension == ".mhtml":
+        return _read_mht(path)
     else:
         raise NotImplementedError(
             f"File type '{extension}' is not supported. "
-            f"Use .pdf, .docx, .xlsx, .xls, .csv, .txt, or .md"
+            f"Use .pdf, .docx, .xlsx, .xls, .csv, .txt, .md, .html, .htm, or .mht"
         )
 
 def _sniff_extension(path: Path) -> str:
@@ -116,7 +121,76 @@ def _read_json(path):
     import json
     with open(path, encoding="utf-8", errors="replace") as f:
         return json.dumps(json.load(f), indent=2, ensure_ascii=False)
-    
+
+
+def _html_to_text(html: str) -> str:
+    """Extract readable text from HTML, preserving TABLE structure as pipe-
+    delimited rows. Financial filings (10-K/10-Q) carry every load-bearing figure
+    inside tables, so flattening them to prose would drop the numbers the golden
+    verifies. Tables are emitted as 'cell | cell | cell' rows after the body text.
+    """
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, "lxml")
+    for t in soup(["script", "style"]):
+        t.decompose()
+    tables = []
+    for tbl in soup.find_all("table"):
+        rows = []
+        for tr in tbl.find_all("tr"):
+            cells = [c.get_text(" ", strip=True)
+                     for c in tr.find_all(["td", "th"])]
+            if any(cells):
+                rows.append(" | ".join(cells))
+        if rows:
+            tables.append("\n".join(rows))
+        tbl.decompose()                      # remove so body text isn't dup'd
+    body = soup.get_text("\n", strip=True)
+    parts = [p for p in (body, "\n\n".join(tables)) if p]
+    return "\n\n".join(parts).strip()
+
+
+def _read_html(path: Path) -> str:
+    """Plain .htm/.html — decode with a tolerant charset and extract."""
+    raw = path.read_bytes()
+    # honor a declared charset if present, else fall back to windows-1252
+    # (SEC EDGAR filings are almost always windows-1252) then utf-8.
+    charset = None
+    m = re.search(rb'charset=["\']?([\w-]+)', raw[:2048], re.I)
+    if m:
+        charset = m.group(1).decode("ascii", "replace")
+    for enc in [charset, "windows-1252", "utf-8"]:
+        if not enc:
+            continue
+        try:
+            return _html_to_text(raw.decode(enc, errors="replace"))
+        except Exception:                    # noqa: BLE001
+            continue
+    return _html_to_text(raw.decode("utf-8", errors="replace"))
+
+
+def _read_mht(path: Path) -> str:
+    """MHTML (.mht/.mhtml) — a MIME multipart web archive ('Saved by Internet
+    Explorer'). Decode the MIME envelope, pull every text/html part (handling
+    quoted-printable / base64 transfer encoding via the email lib), and extract
+    each with the same table-aware HTML reader."""
+    import email
+    msg = email.message_from_bytes(path.read_bytes())
+    htmls = []
+    for part in msg.walk():
+        if part.get_content_type() == "text/html":
+            payload = part.get_payload(decode=True)   # handles QP/base64
+            if payload is None:
+                continue
+            charset = part.get_content_charset() or "windows-1252"
+            htmls.append(payload.decode(charset, errors="replace"))
+    if not htmls:
+        # not a well-formed multipart — treat the whole thing as HTML
+        return _html_to_text(path.read_text(encoding="windows-1252",
+                                            errors="replace"))
+    return "\n\n".join(_html_to_text(h) for h in htmls).strip()
+
+
+
 def _read_txt(path: Path) -> str:
     """Read plain text file."""
     with open(path, "r", encoding="utf-8", errors="replace") as f:

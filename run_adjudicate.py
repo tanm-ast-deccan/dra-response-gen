@@ -80,6 +80,14 @@ def main(argv=None):
         json.dump(pkg, f, indent=1, default=str)
     with open(f"{args.out}.html", "w") as f:
         f.write(render_html(final, adj, run_jsons=run_jsons, pkg=pkg))
+    # trimmed summary view (5 sections: trajectory, decisions, solution logic,
+    # prompt, verifiers) — a quick-read companion to the full report.
+    try:
+        from summary_html import build as _build_summary
+        with open(f"{args.out}_summary.html", "w", encoding="utf-8") as f:
+            f.write(_build_summary(pkg))
+    except Exception as e:                                        # noqa: BLE001
+        print(f"  warn: summary html not written: {e}")
 
     print(f"adjudicated {len(run_jsons)} runs -> {args.out}.json / .html")
     print(f"  verdict: {final.get('audit_verdict')}")

@@ -74,7 +74,8 @@ JPEG_QUALITY = 85           # quality for JPEG re-encoding
 NATIVE_DOCUMENT_EXTS = {".pdf"}
 NATIVE_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 TEXT_EXTRACT_EXTS = {".docx", ".xlsx", ".xls", ".pptx", ".csv", ".tsv",
-                     ".txt", ".md", ".html", ".htm", ".json", ".xml"}
+                     ".txt", ".md", ".html", ".htm", ".mht", ".mhtml",
+                     ".json", ".xml"}
 
 ALL_SUPPORTED_EXTS = NATIVE_DOCUMENT_EXTS | NATIVE_IMAGE_EXTS | TEXT_EXTRACT_EXTS
 
@@ -679,11 +680,26 @@ class FileProcessor:
         format_names = {
             ".txt": "Text", ".md": "Markdown", ".html": "HTML",
             ".htm": "HTML", ".json": "JSON", ".xml": "XML",
+            ".mht": "MHTML", ".mhtml": "MHTML",
         }
         format_name = format_names.get(ext, "Text")
-        
-        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-            full_text = f.read()
+
+        # HTML / MHTML: extract clean text with tables preserved rather than
+        # sending raw markup (or, for .mht, an undecoded MIME+quoted-printable
+        # blob). Financial filings carry every figure inside tables, so the
+        # table-aware reader is what makes the numbers verifiable.
+        if ext in (".html", ".htm", ".mht", ".mhtml"):
+            try:
+                from src.document_parser import _read_html, _read_mht
+                p = Path(filepath)
+                full_text = (_read_mht(p) if ext in (".mht", ".mhtml")
+                             else _read_html(p))
+            except Exception:                # noqa: BLE001 — fall back to raw
+                with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+                    full_text = f.read()
+        else:
+            with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+                full_text = f.read()
         
         full_text, truncated = self._apply_token_budget(full_text, filename)
         

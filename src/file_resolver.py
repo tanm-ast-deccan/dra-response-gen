@@ -257,6 +257,7 @@ class GDriveClient:
         return service.files().get(
             fileId=file_id,
             fields="id,name,mimeType,size",
+            supportsAllDrives=True,
         ).execute()
 
     def download_file(self, file_id: str, dest_path: str, name_prefix: str = "") -> str:
@@ -295,7 +296,7 @@ class GDriveClient:
             request = service.files().export_media(
                 fileId=file_id,
                 mimeType=export_mime,
-            )
+            )  # export_media has no supportsAllDrives param; metadata get above carries it
             fh = io.BytesIO()
             downloader = MediaIoBaseDownload(fh, request)
             done = False
@@ -311,7 +312,8 @@ class GDriveClient:
         # Regular file → direct download
         actual_path = str(Path(dest_path).parent / f"{name_prefix}{name}")
 
-        request = service.files().get_media(fileId=file_id)
+        request = service.files().get_media(fileId=file_id,
+                                             supportsAllDrives=True)
         fh = io.BytesIO()
         downloader = MediaIoBaseDownload(fh, request)
         done = False
@@ -336,6 +338,12 @@ class GDriveClient:
                 fields="nextPageToken,files(id,name,mimeType,size)",
                 pageToken=page_token,
                 pageSize=100,
+                # Include Shared Drive content. Without these the Drive API lists
+                # ONLY My-Drive items, so a folder that actually lives in a Shared
+                # Drive resolves fine but returns "0 files" — the input files are
+                # silently invisible and every golden figure becomes unverifiable.
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
             ).execute()
 
             results.extend(response.get("files", []))

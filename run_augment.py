@@ -99,14 +99,24 @@ def _adjudicate_task(run_dir_base, manifest, model, no_llm=False, no_html=False)
     # render THAT as HTML, so adjudicated.json and adjudicated.html describe the
     # same object — with the full dag / crux / shapley, not the thin merge.
     pkg = build_sme_package(final, adj, run_jsons=run_jsons)
-    fjson = os.path.join(run_dir_base, "adjudicated.json")
+    # prefix outputs with the task id so files are self-identifying once moved out
+    # of their per-task folder (e.g. {task}_adjudicated.json, not adjudicated.json).
+    tid = manifest.get("task_id") or os.path.basename(run_dir_base.rstrip("/"))
+    fjson = os.path.join(run_dir_base, f"{tid}_adjudicated.json")
     json.dump(pkg, open(fjson, "w", encoding="utf-8"),
               ensure_ascii=False, indent=2, default=str)
     if not no_html:
-        open(os.path.join(run_dir_base, "adjudicated.html"),
+        open(os.path.join(run_dir_base, f"{tid}_adjudicated.html"),
              "w", encoding="utf-8").write(
                  render_html(final, adj, run_jsons=run_jsons, pkg=pkg))
-    print(f"    => adjudicated {len(run_jsons)} runs -> adjudicated.json"
+        # trimmed 5-section summary companion
+        try:
+            from summary_html import build as _build_summary
+            open(os.path.join(run_dir_base, f"{tid}_adjudicated_summary.html"),
+                 "w", encoding="utf-8").write(_build_summary(pkg))
+        except Exception as e:                                   # noqa: BLE001
+            print(f"    warn: summary html not written: {e}")
+    print(f"    => adjudicated {len(run_jsons)} runs -> {tid}_adjudicated.json"
           f"{'' if no_html else ' + .html'} | verdict "
           f"{final.get('audit_verdict')} | {len(adj.overrides)} override(s)")
 

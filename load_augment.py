@@ -17,12 +17,13 @@ Usage:
   python load_augment.py --csv <delivery.csv> --aug-dir <dir with augment files> --out augment_index.json
 """
 import argparse, csv, re, json, glob, os, html as H
+_VIDL = r"V(?:\d+[a-z]?|_[A-Za-z0-9][A-Za-z0-9_.]*)"
 
 def vtexts(cell):
     """{Vid: normalized text} from a 'V# - text' / 'V#: text' blob."""
     d = {}
-    for blk in re.split(r'(?=V\d+\s*[-:]\s)', cell or ""):
-        m = re.match(r'^V(\d+)\s*[-:]\s*(.*)', blk.strip(), re.S)
+    for blk in re.split(r'(?=(?:'+_VIDL+r')\s*[-:]\s)', cell or ""):
+        m = re.match(r'^('+_VIDL+r')\s*(?:\[[^\]]*\])?\s*[-:]\s*(.*)', blk.strip(), re.S)
         if not m:
             continue
         t = re.sub(r'\s+', ' ', m.group(2)).strip()
@@ -50,7 +51,7 @@ def from_html(path):
     # DAG/weights/sov table rows
     dag, weights, sov, crux = {}, {}, {}, []
     rowpat = re.compile(
-        r"<td class='mono'>(V\d+)</td><td>(.*?)</td><td class='mono'>(.*?)</td>"
+        r"<td class='mono'>("+_VIDL+r")</td><td>(.*?)</td><td class='mono'>(.*?)</td>"
         r"<td class='mono'>[\d.]+%</td><td class='mono'>([\d.]+)%.*?</td>"
         r"<td class='mono'>(.*?)</td>", re.S)
     for vid, cruxcell, dep, sw, s in rowpat.findall(h):

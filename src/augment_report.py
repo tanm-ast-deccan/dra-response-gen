@@ -11,6 +11,10 @@ Both are self-contained, dependency-free HTML for SME eyeballing.
 from __future__ import annotations
 import html
 import re
+
+#: Verifier-id pattern — classic (V1, V5a) and semantic (V_P1_pat_2004) ids.
+_VIDR = r"V(?:\d+[a-z]?|_[A-Za-z0-9][A-Za-z0-9_.]*)"
+_VIDR_BARE = r"\b" + _VIDR + r"\b"
 from typing import Dict
 
 
@@ -200,7 +204,7 @@ def _decision_items(res: dict):
     # verifier id -> text, from the canonical set; used by several item kinds
     vtext_map = {}
     for _line in (res.get("augmented_verifiers_text") or "").splitlines():
-        _m = re.match(r"\s*(V\d+[a-z]?)\s*:\s*(.*)", _line)
+        _m = re.match(r"\s*(" + _VIDR + r")\s*(?:\[[^\]]*\])?\s*:\s*(.*)", _line)
         if _m:
             vtext_map[_m.group(1)] = _m.group(2).strip()
     # Verifiers the property audit REWROTE supersede any earlier Call-2 change to
@@ -216,7 +220,7 @@ def _decision_items(res: dict):
             return False
         import re as _re
         loc = str(c.get("location", "")) + " " + str(c.get("old", ""))
-        return any(vid in _re.findall(r"\bV\d+[a-z]?\b", loc)
+        return any(vid in _re.findall(_VIDR_BARE, loc)
                    for vid in rewritten_vids)
 
     for i, c in enumerate(res.get("changes_applied") or []):

@@ -206,13 +206,30 @@ def _verifiers_from_text(augmented_verifiers_text: str) -> List[dict]:
     The id space (V1, V5a, ...) is the contract the rest of the pipeline keys on,
     so re-derivation reads the verifier set from the same text the report and the
     SME saw, never from a stale in-memory list.
+
+    TOLERANT to the two non-canonical seed formats ("V1 - text" dash, "v1: text"
+    lowercase). This routine also parses text that FELL BACK to the raw seed
+    column (finalized_vtext = audit.final_verifiers_text or verifiers_text), so it
+    must accept the seed's shape or the whole set is dropped and only the
+    augment-added verifiers survive — the cause of the collapsed DAG/crux. Kept in
+    lockstep with auditor._parse_v_lines; see its docstring for the separator
+    rules (colon: optional space; dash: requires surrounding spaces, so an
+    internal hyphen in the prose is never mistaken for the separator). Ids are
+    normalized to an uppercase 'V'; a trailing inter-entry comma is stripped.
     """
     import re
+    vid_line = (r"\s*(?P<vid>V(?:\d+[a-z]?|_[A-Za-z0-9][A-Za-z0-9_.]*))\s*"
+                r"(?:\[[^\]]*\])?\s*(?::\s*|\s+-\s+)(?P<text>.*)")
     out = []
     for line in (augmented_verifiers_text or "").splitlines():
-        m = re.match(r"\s*(V\d+[a-z]?)\s*:\s*(.*)", line)
+        m = re.match(vid_line, line)
         if m:
-            out.append({"id": m.group(1), "text": m.group(2).strip()})
+            vid = m.group("vid")
+            if re.match(r"[Vv]\d", vid):
+                vid = "V" + vid[1:]
+            text = m.group("text").strip().rstrip(",").strip()
+            if text:
+                out.append({"id": vid, "text": text})
     return out
 
 
@@ -344,6 +361,26 @@ def derive_frozen_graph(pkg: dict, compute_shapley: bool = False,
         pkg.setdefault("crux_shapley_weights", {})
 
     # 7) re-assert the scoreability gates on the (possibly re-derived) set.
+    #    (a0) any UNRESOLVED judgment question still pending blocks. apply_decisions
+    #         now keeps a question in judgment_changes_pending_sme when its answer
+    #         could not be applied (a binary-file edit, an unlocatable anchor, a
+    #         golden step it could not synthesize) — those are real, unfinished SME
+    #         edits. A package with pending questions is NOT scoreable; the seal
+    #         must honor the list rather than trust that it was cleared. Without
+    #         this, a package can report scoreable=True while still carrying
+    #         pending questions, which is the exact inconsistency the pending list
+    #         exists to prevent.
+    pending_q = pkg.get("judgment_changes_pending_sme") or []
+    if pending_q:
+        pkg["scoreable"] = False
+        pkg["not_scoreable_reason"] = (
+            f"{len(pending_q)} unresolved judgment question(s) pending SME edit: "
+            + ", ".join(str(q.get("artifact", "?")) for q in pending_q[:6])
+            + (" ..." if len(pending_q) > 6 else "")
+            + ". These answers could not be auto-applied (binary file, unlocatable "
+              "anchor, or unsynthesizable step) and must be made by hand before "
+              "the package is scoreable.")
+        return pkg
     #    (a) a crux verifier still tied to an unresolved judgment question blocks.
     flagged = [vid for vid in pkg["crux_ids"]
                if (ev.get(vid, {}) or {}).get("source_of_verification")

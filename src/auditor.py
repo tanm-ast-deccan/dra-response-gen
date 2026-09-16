@@ -20,6 +20,13 @@ from __future__ import annotations
 
 import re
 
+#: Verifier-id pattern shared across the pipeline — classic (V1, V5a) AND
+#: semantic (V_P1_pat_2004, V_P1_v2.0) ids some synthetic pipelines emit.
+_VID = r"V(?:\d+[a-z]?|_[A-Za-z0-9][A-Za-z0-9_.]*)"
+_VID_LINE = (r"\s*(?P<vid>" + _VID + r")\s*(?:\[[^\]]*\])?"
+             r"\s*(?::\s*|\s+-\s+)(?P<text>.*)")
+_VID_BARE = r"\b" + _VID + r"\b"
+
 import json
 import logging
 from dataclasses import dataclass, field, asdict
@@ -169,12 +176,34 @@ def _parse_v_lines(block: str) -> List[dict]:
     ids (V5a, V5b). Unlike verifier_parser.parse_verifiers, which extracts an
     integer index and would turn 'V5a: ...' into id 'V5' with 'a:' leaking into
     the text, this keys on the full id token so split children survive a re-parse.
+
+    TOLERANT to the two non-canonical formats the SEED verifier column ships in,
+    because that column is authored by hand and is not guaranteed canonical:
+      * a DASH separator  -- "V1 - text"  (seen on most tasks)
+      * LOWERCASE ids     -- "v1: text"   (seen on others)
+    Both parsed to ZERO verifiers under the old colon-only, upper-V-only pattern,
+    which silently dropped the entire authored seed set and left only the
+    augment-added verifiers downstream (the cause of the collapsed verifier DAG /
+    crux). The id is normalized to an uppercase 'V' so the rest of the pipeline —
+    which keys on 'V\\d+[a-z]?' — matches it. A trailing comma (the seed uses
+    "..., \\n" between entries) is stripped.
+
+    Separator rules, chosen to avoid false splits on verifier PROSE:
+      * colon  -> optional trailing space ("V4:Gas" and "V4: Gas" both parse)
+      * dash   -> REQUIRES surrounding spaces (" - "), so an internal hyphen
+                  ("Only L1-L4 rows") or a negative-number clause inside the text
+                  can never be mistaken for the id/text separator.
     """
     out = []
     for line in (block or "").splitlines():
-        m = re.match(r"\s*(V\d+[a-z]?)\s*:\s*(.*)", line)
+        m = re.match(_VID_LINE, line)
         if m:
-            out.append({"id": m.group(1), "text": m.group(2).strip()})
+            vid = m.group("vid")
+            if re.match(r"[Vv]\d", vid):
+                vid = "V" + vid[1:]
+            text = m.group("text").strip().rstrip(",").strip()
+            if text:
+                out.append({"id": vid, "text": text})
     return out
 
 
@@ -485,7 +514,7 @@ def audit_verifier_changes(original_text: str, corrected_text: str,
     for ch in changes or []:
         if str(ch.get("artifact", "")).lower() != "verifiers":
             continue
-        for vid in re.findall(r"\bV\d+\b", str(ch.get("location", ""))
+        for vid in re.findall(_VID_BARE, str(ch.get("location", ""))
                               + " " + str(ch.get("old", ""))):
             declared[vid] = str(ch.get("type", ""))
 
@@ -887,9 +916,14 @@ def _finalize_verifier_set(result: "AuditResult", original_verifiers_text: str,
     result.step_graph_health = graph_health(step_graph, step_nodes)
 
     # targets frozen from the verifier TEXT (authoritative; augment only adds
-    # unit/source metadata later)
+    # unit/source metadata later). The task's known trap values (the wrong
+    # figures the derivation records on trapped claims) are passed in so the
+    # widened compute-result reader can freeze interior "Calculate X as N"
+    # targets while REFUSING to ever freeze a trap value — see verifier_grammar.
+    _trap_values = sorted({c.get("trap_value") for c in (claim_source or [])
+                           if c.get("trap_value") is not None})
     derived, grammar_problems = derive_expected_values(
-        format_verifiers_ids(all_vs))
+        format_verifiers_ids(all_vs), trap_values=_trap_values)
     result.target_grammar_problems = grammar_problems
     ev = dict(derived)
 

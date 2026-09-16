@@ -192,7 +192,28 @@ Rules:
   emitting an empty string.
 - "value" must be the raw number you read from the inputs (the code checks it \
 appears in the source).
-- Emit a claim for EVERY load-bearing figure, including intermediate steps.
+- DECOMPOSE THE DERIVATION — emit one claim per step, not one per answer. This
+  is the single most important thing you do here: the downstream scorer can only
+  watch a computed quantity if it exists as its OWN claim, so a collapsed
+  trajectory (final answers only) leaves the whole middle of the derivation
+  unwatched and the task under-scored. Concretely, emit a SEPARATE claim for:
+    (a) EACH raw input value you read from a file and then use in a computation —
+        give it its own claim whose "operation" is just that input's name (e.g.
+        id "C0a", label "EIA gas price week ending 2025-01-06", operation
+        "eia_price", claimed_result 3.047). One leaf claim per distinct input
+        figure the derivation consumes;
+    (b) EACH intermediate derived quantity — every figure computed from other
+        figures and then fed into a later computation. Do not fold a multi-step
+        derivation into one operation; if the expert computes A from inputs, then
+        B from A, emit a claim for A AND a claim for B;
+    (c) EACH final answer / decision-driving figure.
+  A good trajectory for a task with N inputs and M derived quantities has on the
+  order of N + M claims, chained: a derived claim's "inputs" name the earlier
+  claims it consumes. A trajectory that emits only the handful of final figures —
+  inlining every input and intermediate into one big operation — is the FAILURE
+  this rule exists to prevent: it passes the arithmetic gate but produces a flat,
+  mostly-unwatched step graph. When in doubt, split: an extra leaf claim is
+  cheap; a missing intermediate is an unwatched load-bearing step.
 - If a figure cannot be expressed as an arithmetic operation over inputs (it is \
 open judgment), do NOT invent a formula — omit it from arithmetic_claims and note \
 it in preliminary_notes as non-deterministic.
@@ -307,6 +328,15 @@ Rules for "corrected_claims" — this is the derivation, and it is consumed by c
 - Re-emit EVERY claim, not only the ones you changed. The list replaces your
   call-1 claims wholesale and is recomputed from scratch, so an omitted claim
   disappears from the derivation.
+- DECOMPOSE FULLY, and EXPAND a thin call-1 list rather than just copying it. The
+  same rule that governed call 1 governs here: one claim per raw input value used
+  (a leaf claim, from_claim null), one per intermediate derived quantity (chained
+  via from_claim), one per final/decision figure. If your call-1 claims collapsed
+  a multi-step derivation into a few final figures, ADD the missing input and
+  intermediate claims now — a derived quantity that no claim emits is a step the
+  scorer cannot watch. Target roughly (number of distinct inputs consumed) +
+  (number of intermediate results) claims, fully chained; do not ship only the
+  final answers.
 - Apply your corrections to them. Where a code verdict said ARITHMETIC_ERROR,
   either fix the operation or fix the claimed_result so the two agree — do not
   re-emit a claim you know does not reconcile.

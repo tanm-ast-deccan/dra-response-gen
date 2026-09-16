@@ -43,7 +43,46 @@ REFUSALS
 import argparse
 import json
 import os
+import re
 import sys
+
+
+def _load_dotenv(start: str = ".") -> None:
+    """Load KEY=VALUE lines from a nearby .env into os.environ if not already set.
+
+    apply_decisions is a separate entrypoint from run_augment, and nothing else
+    loads .env here — so without this, ANTHROPIC_API_KEY sits in .env unread and
+    every LLM-assisted resolution falls back to manual with "model unavailable",
+    even though the key exists. Dependency-free (no python-dotenv): walks up from
+    the working directory to find a .env and sets only vars not already exported,
+    so a real shell export always wins. Silent if no .env is found.
+    """
+    d = os.path.abspath(start)
+    for _ in range(6):                       # walk up a few levels, then stop
+        p = os.path.join(d, ".env")
+        if os.path.isfile(p):
+            try:
+                for line in open(p, encoding="utf-8"):
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    k, v = k.strip(), v.strip().strip('"').strip("'")
+                    os.environ.setdefault(k, v)
+            except Exception:                # noqa: BLE001 — never fail on .env
+                pass
+            return
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+
+
+_load_dotenv()
+
+_VID_AD = r"V(?:\d+[a-z]?|_[A-Za-z0-9][A-Za-z0-9_.]*)"
+_VID_BARE_AD = r"\b" + _VID_AD + r"\b"
+_VID_ANCHOR_AD = r"(?:" + _VID_AD + r")$"
 
 #: Verdicts that block scoring unless the SME explicitly re-grades at seal.
 _NONPROCEEDABLE = {"BROKEN", "UNGRADEABLE", "NON_DETERMINISTIC"}
@@ -58,6 +97,233 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 #: here because an SME resolution that changes a value must move them too — a
 #: sealed golden whose deliverable still shows the pre-resolution value is a
 #: self-contradiction the scorer cannot catch.
+def _llm():
+    """Return (call_llm, clean_json, model) from the auditor's evaluator, or None
+    if unavailable (no key / import fails). Callers fall back to manual when None,
+    so the LLM path never becomes a hard dependency of sealing."""
+    try:
+        from src.prompt_evaluator import (
+            _call_llm, _clean_json_response, DEFAULT_JUDGE_MODEL)
+        return _call_llm, _clean_json_response, DEFAULT_JUDGE_MODEL
+    except Exception:                                           # noqa: BLE001
+        return None
+
+
+#: The LLM may reword prose but MUST NOT rewrite it wholesale — a coherent
+#: application of the SME's intent stays close in length. Reject an edit whose
+#: length changed by more than this factor as a likely hallucination; fall back
+#: to manual so a runaway rewrite never seals silently.
+_PROSE_LEN_GUARD = 1.6
+
+
+def _llm_apply_prose_edit(artifact_text: str, sme_intent: str,
+                          artifact_name: str):
+    """Apply the SME's free-text INTENT to a prose artifact via the auditor's
+    model. Returns the edited text, or None to fall back to manual.
+
+    The model only REWORDS to satisfy the intent — it is told never to introduce
+    a new numeric value, target, or fact (those are the SME's / the golden's, not
+    the model's). The result is length-guarded and then shown to the SME in the
+    regenerated HTML for confirmation; it is never trusted blind.
+    """
+    llm = _llm()
+    if llm is None or not artifact_text.strip():
+        return None
+    call, _clean, model = llm
+    prompt = (
+        "You are editing one text artifact of a benchmark task to satisfy an "
+        "SME's instruction. Apply the instruction faithfully and minimally.\n\n"
+        "HARD RULES:\n"
+        "- Return ONLY the full edited artifact text, nothing else.\n"
+        "- Do NOT introduce any new numeric value, target, threshold, date, or "
+        "factual claim. You may remove or reword text; you may not invent data.\n"
+        "- Change as little as possible beyond what the instruction requires.\n"
+        "- Preserve all content the instruction does not touch, verbatim.\n\n"
+        f"ARTIFACT ({artifact_name}):\n<<<\n{artifact_text}\n>>>\n\n"
+        f"SME INSTRUCTION:\n<<<\n{sme_intent}\n>>>\n\n"
+        "Edited artifact text:")
+    try:
+        out = call(prompt, model, max_tokens=4000)
+    except Exception:                                           # noqa: BLE001
+        return None
+    out = (out or "").strip()
+    # Strip scaffolding the model sometimes echoes back around the artifact:
+    # code fences, and the <<< >>> delimiters we wrap the artifact in. Remove
+    # leading/trailing markers and any bare delimiter lines, so they never land
+    # in the sealed artifact text.
+    if out.startswith("```"):
+        out = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", out).strip()
+    # leading/trailing <<< or >>> the model wrapped the whole answer in
+    out = re.sub(r"^<{3,}\s*\n?", "", out)
+    out = re.sub(r"\n?\s*>{3,}$", "", out)
+    # any remaining bare delimiter lines anywhere
+    out = "\n".join(ln for ln in out.splitlines()
+                    if ln.strip() not in ("<<<", ">>>")).strip()
+    if not out:
+        return None
+    # Reject if the model still smuggled scaffolding into the middle of the text
+    # (a sign it misunderstood the wrapper) — safer to fall back to manual.
+    if "<<<" in out or ">>>" in out:
+        return None
+    lo = len(artifact_text) / _PROSE_LEN_GUARD
+    hi = len(artifact_text) * _PROSE_LEN_GUARD
+    if not (lo <= len(out) <= hi):
+        return None                       # length blew up/collapsed -> manual
+    return out
+
+
+#: A structured tolerance/value pin an SME can write in a question answer to set
+#: a verifier's frozen target deterministically — no free-text parsing of a
+#: golden number, no LLM. Syntax (case-insensitive), e.g.:
+#:     PIN V3 tol=0.785
+#:     PIN V3 value=157.039 tol=0.785
+#: Applied straight into expected_values[Vid]; this is the one right way to edit a
+#: scoring number: the SME names the verifier and the exact figure, code writes it.
+_PIN_RE = re.compile(
+    r"\bPIN\s+(?P<vid>"+_VID_AD+r")\b"
+    r"(?:\s+value\s*=\s*(?P<value>-?[\d,]+\.?\d*))?"
+    r"(?:\s+tol\s*=\s*(?P<tol>-?[\d,]+\.?\d*))?",
+    re.IGNORECASE)
+
+
+def _parse_pin(answer: str):
+    """Return (vid, {value?, tol?}) from a structured PIN directive, or None.
+    Only fires on the explicit `PIN Vid ...` form so ordinary prose answers are
+    never mistaken for a numeric pin."""
+    if not answer:
+        return None
+    m = _PIN_RE.search(answer)
+    if not m:
+        return None
+    vid = m.group("vid").upper()
+    fields = {}
+    if m.group("value") is not None:
+        try:
+            fields["value"] = float(m.group("value").replace(",", ""))
+        except ValueError:
+            pass
+    if m.group("tol") is not None:
+        try:
+            fields["tol"] = float(m.group("tol").replace(",", ""))
+        except ValueError:
+            pass
+    if not fields:
+        return None
+    return vid, fields
+
+
+def _num_key(v):
+    """Coerce a value to a rounded float for numeric comparison, or None.
+    Local copy of adjudicate_runs._num_key so apply_decisions has no cross-module
+    dependency for this one-line helper."""
+    try:
+        return round(float(v), 4)
+    except (TypeError, ValueError):
+        return None
+
+
+def _llm_format_step(sme_free_text: str, claims: list):
+    """Structure an SME's free-text trajectory step into a claim node via the
+    auditor's model. Returns a claim dict, or None to fall back to manual.
+
+    CRITICAL: the model does NOT compute or invent the value — it EXTRACTS the
+    value the SME stated. If the SME did not state a numeric value, the model
+    returns null and we fall back to manual (a step with no SME-supplied value is
+    never auto-added). The caller then re-derives to confirm the value is
+    arithmetically consistent before it is accepted.
+    """
+    llm = _llm()
+    if llm is None or not sme_free_text.strip():
+        return None
+    call, clean, model = llm
+    existing = ", ".join(str(c.get("id")) for c in claims if c.get("id"))[:800]
+    prompt = (
+        "An SME wants to add ONE step (claim) to a benchmark task's golden "
+        "derivation. Convert their free-text description into a single claim "
+        "node. Respond with ONLY a JSON object, no prose.\n\n"
+        "HARD RULES:\n"
+        "- Extract the numeric value the SME STATED. Do NOT compute or invent a "
+        "value. If the SME stated no numeric value, set \"recomputed\": null.\n"
+        "- \"operation\" is a short formula/description in the SME's terms.\n"
+        "- \"inputs\" lists the ids of existing claims this step consumes, chosen "
+        "ONLY from the existing ids provided; use [] if none apply.\n"
+        "- Choose a fresh \"id\" not already used.\n\n"
+        f"EXISTING CLAIM IDS: {existing}\n\n"
+        f"SME STEP DESCRIPTION:\n<<<\n{sme_free_text}\n>>>\n\n"
+        "JSON with keys: id, label, operation, inputs (list of ids), recomputed "
+        "(number or null):")
+    try:
+        raw = call(prompt, model, max_tokens=1200)
+        obj = json.loads(clean(raw))
+    except Exception:                                           # noqa: BLE001
+        return None
+    if not isinstance(obj, dict) or obj.get("recomputed") is None:
+        return None                       # no SME value -> manual, never invent
+    node = {
+        "id": str(obj.get("id") or ""),
+        "label": str(obj.get("label") or ""),
+        "operation": str(obj.get("operation") or ""),
+        "recomputed": obj.get("recomputed"),
+        "input_provenance": [{"from_claim": i} for i in (obj.get("inputs") or [])
+                             if isinstance(i, str)],
+    }
+    if not node["id"] or _num_key(node["recomputed"]) is None:
+        return None
+    existing_ids = {str(c.get("id")) for c in claims}
+    if node["id"] in existing_ids:
+        return None                       # id collision -> manual
+    for p in node["input_provenance"]:
+        if p["from_claim"] not in existing_ids:
+            return None                   # references a non-existent claim
+    return node
+
+
+_ELIDE_MAX_SPAN = 400   # chars; refuse to auto-edit an elided anchor whose
+#: hidden middle is larger than this — too much unseen text to replace safely.
+
+
+def _locate_anchor_span(old: str, cur: str):
+    """Locate the span in `cur` that an SME resolution's `old` anchor refers to.
+
+    Returns (start, end) char offsets, or None if it can't be located safely.
+    Two cases:
+      * verbatim: `old` is an exact substring of `cur` -> its own span.
+      * elided:   `old` contains an ellipsis (the auditor dropped the middle,
+        e.g. "…offline retail. ... Do not use…"). Split on the ellipsis, require
+        EVERY fragment to appear in `cur` in order, and return the span from the
+        first fragment's start to the last fragment's end — but only if the
+        hidden middle is not larger than _ELIDE_MAX_SPAN (guards against
+        replacing a huge unseen span). Otherwise None -> caller flags the edit
+        for manual application rather than guessing.
+    """
+    old = (old or "").strip()
+    if not old:
+        return None
+    if old in cur:
+        i = cur.find(old)
+        return (i, i + len(old))
+    if "..." not in old and "\u2026" not in old:
+        return None
+    frags = [f.strip() for f in re.split(r"\.{3,}|\u2026", old) if f.strip()]
+    if len(frags) < 2:
+        return None
+    pos, start, end = 0, None, None
+    for f in frags:
+        i = cur.find(f, pos)
+        if i == -1:
+            return None                    # a fragment is missing -> unsafe
+        if start is None:
+            start = i
+        end = i + len(f)
+        pos = end
+    if start is None or end is None:
+        return None
+    seen = sum(len(f) for f in frags)
+    if (end - start) - seen > _ELIDE_MAX_SPAN:
+        return None                        # hidden middle too large -> unsafe
+    return (start, end)
+
+
 _ARTIFACT_KEY = {
     "solution_logic": "corrected_solution_logic",
     "sanity_check": "corrected_sanity_check",
@@ -98,7 +364,7 @@ def _items(pkg):
         if str(c.get("artifact", "")).lower() != "verifiers":
             return False
         loc = str(c.get("location", "")) + " " + str(c.get("old", ""))
-        return any(vid in _re.findall(r"\bV\d+[a-z]?\b", loc)
+        return any(vid in _re.findall(_VID_BARE_AD, loc)
                    for vid in rewritten_vids)
 
     _ci = 0
@@ -239,6 +505,7 @@ def apply_decisions(pkg: dict, dec: dict, force: bool = False) -> dict:
     out = dict(pkg)
     vmap = _verifier_map(pkg)
     log = []
+    _resolved_questions: dict = {}   # cid -> applied?  (drives the pending sweep)
 
     for it in items:
         cid, kind = it["id"], it["kind"]
@@ -275,17 +542,117 @@ def apply_decisions(pkg: dict, dec: dict, force: bool = False) -> dict:
                 log.append({"item": cid, "action": "kept"})
 
         elif kind == "question":
-            # the answer IS the resolution; record it against the artifact so a
-            # re-run cannot resolve it differently
+            # Option B: the answer IS the resolution — infer how to APPLY it from
+            # the payload, don't just file it. Three flavors, each applied
+            # defensively (never blind-splice free text into an artifact):
+            #   * text-artifact edit  — artifact is an editable text field
+            #     (prompt/sanity/solution_logic/deliverable) AND the payload gives
+            #     an `old` anchor: replace the anchor with the answer, but ONLY if
+            #     the anchor is present. No anchor / anchor missing -> flag manual.
+            #   * verifier pin        — artifact names a verifier (V..): set its
+            #     text to the answer, like value_mismatch.
+            #   * manual / design     — a binary file (pdf/xlsx) or a design-only
+            #     question the pipeline can't apply: record it and add an explicit
+            #     manual-edit requirement so it is never silently dropped and the
+            #     not-scoreable gate stays honest.
+            # `applied` gates whether this question is cleared from the pending
+            # list below — an unapplied question keeps blocking, by design.
+            art = pay.get("artifact")
+            old = pay.get("old")
+            applied = False
+            manual_reason = None
+            if choice in ("accept", "other") and reason:
+                pin = _parse_pin(reason)
+                if pin is not None:
+                    # Structured numeric pin: "PIN V3 tol=0.785 [value=...]".
+                    # Deterministic — the SME named the verifier and the exact
+                    # figure; write it straight into the frozen target. No LLM,
+                    # no free-text parsing of a golden number.
+                    vid, fields = pin
+                    ev = out.setdefault("expected_values", {})
+                    tgt = ev.setdefault(vid, {"value": None, "tol": 0.0,
+                                              "unit": "", "kind": "numeric",
+                                              "source_of_verification":
+                                                  "arithmetic"})
+                    if "value" in fields:
+                        tgt["value"] = fields["value"]
+                    if "tol" in fields:
+                        tgt["tol"] = fields["tol"]
+                    applied = True
+                    log.append({"item": cid, "action": "question_pin_applied",
+                                "verifier": vid, "fields": fields})
+                    key = None            # skip the text/manual dispatch below
+                else:
+                    key = _ARTIFACT_KEY.get(art)
+                if pin is not None:
+                    pass                  # already applied
+                elif key and old:
+                    cur = out.get(key) or ""
+                    span = _locate_anchor_span(old, cur)
+                    if span is not None:
+                        s, e = span
+                        out[key] = cur[:s] + reason + cur[e:]
+                        applied = True
+                        log.append({"item": cid, "action": "question_text_applied",
+                                    "artifact": art})
+                    else:
+                        # anchor not locatable — the SME likely wrote INTENT, not
+                        # exact replacement text. Apply it with the auditor's model
+                        # (rewords only; never invents a value). SME confirms the
+                        # result in the regenerated HTML.
+                        edited = _llm_apply_prose_edit(cur, reason, art)
+                        if edited is not None and edited != cur:
+                            out[key] = edited
+                            applied = True
+                            log.append({"item": cid,
+                                        "action": "question_text_applied_llm",
+                                        "artifact": art})
+                        else:
+                            manual_reason = (
+                                f"could not locate an anchor in {art} and the "
+                                f"model edit was unavailable or rejected; SME "
+                                f"must edit {art} by hand")
+                elif key and not old:
+                    # whole-artifact intent edit (no anchor at all) via the model
+                    cur = out.get(key) or ""
+                    edited = _llm_apply_prose_edit(cur, reason, art)
+                    if edited is not None and edited != cur:
+                        out[key] = edited
+                        applied = True
+                        log.append({"item": cid,
+                                    "action": "question_text_applied_llm",
+                                    "artifact": art})
+                    else:
+                        manual_reason = (f"no anchor and model edit unavailable "
+                                         f"for {art}; SME must edit by hand")
+                elif isinstance(art, str) and re.match(_VID_ANCHOR_AD, art) \
+                        and art in vmap:
+                    vmap[art] = reason
+                    applied = True
+                    log.append({"item": cid, "action": "question_verifier_pinned",
+                                "verifier": art, "text": reason})
+                else:
+                    # binary file (pdf/xlsx) or unmapped artifact, or a pure
+                    # design decision — cannot be applied programmatically.
+                    manual_reason = (f"artifact {art!r} is not a programmatically "
+                                     f"editable text field; SME applies by hand")
+            elif choice == "reject":
+                log.append({"item": cid, "action": "question_rejected",
+                            "reason": reason})
+                applied = True     # a reject is a resolution: stop blocking on it
+            # always record for provenance
             out.setdefault("sme_resolutions", []).append({
-                "artifact": pay.get("artifact"),
-                "location": pay.get("location"),
-                "question": pay.get("sme_question"),
-                "answer": reason,
-                "decided": choice,
-            })
-            log.append({"item": cid, "action": "resolved",
-                        "question": str(pay.get("sme_question"))[:80]})
+                "artifact": art, "location": pay.get("location"),
+                "question": pay.get("sme_question"), "answer": reason,
+                "decided": choice, "applied": applied})
+            if manual_reason:
+                out.setdefault("sme_manual_edits_required", []).append({
+                    "item": cid, "artifact": art, "answer": reason,
+                    "why": manual_reason})
+                log.append({"item": cid, "action": "question_manual_required",
+                            "artifact": art, "why": manual_reason})
+            # remember whether this question was resolved, for the pending sweep
+            _resolved_questions[cid] = applied
 
         elif kind == "rewrite":
             vid = pay.get("id")
@@ -364,7 +731,7 @@ def apply_decisions(pkg: dict, dec: dict, force: bool = False) -> dict:
             if choice == "accept" and len(ids) >= 2:
                 import re as _re
                 rec = str(pay.get("recommended_action") or "")
-                m = _re.search(r"keep\s+(V\d+[a-z]?)", rec, _re.I)
+                m = _re.search(r"keep\s+("+_VID_AD+r")", rec, _re.I)
                 keep = m.group(1) if m and m.group(1) in ids else min(
                     ids, key=lambda x: (int(_re.sub(r"\D", "", x) or 0), x))
                 ev = out.get("expected_values") or {}
@@ -397,6 +764,33 @@ def apply_decisions(pkg: dict, dec: dict, force: bool = False) -> dict:
                 vmap[vid] = reason
                 log.append({"item": cid, "action": "value_corrected",
                             "verifier": vid, "text": reason})
+            elif choice == "other" and reason:
+                # "Something else" on a value_mismatch = the golden is missing the
+                # step this verifier should watch; the SME describes it in free
+                # text. Format it into a claim node with the auditor's model (which
+                # EXTRACTS the SME's stated value, never invents one) and add it to
+                # the trajectory. The seal re-derive below recomputes the graph and
+                # the arithmetic verifier confirms the value chains — a node whose
+                # value does not reconcile shows up as a failed claim, not a silent
+                # corruption. If the model can't produce a valid node (no value,
+                # bad chaining, id clash), fall back to manual.
+                claims = out.get("corrected_claim_verdicts") or []
+                node = _llm_format_step(reason, claims)
+                if node is not None:
+                    claims.append(node)
+                    out["corrected_claim_verdicts"] = claims
+                    log.append({"item": cid, "action": "golden_step_added_llm",
+                                "claim": node["id"], "value": node["recomputed"],
+                                "verifier": vid})
+                else:
+                    out.setdefault("sme_manual_edits_required", []).append({
+                        "item": cid, "artifact": "corrected_claim_verdicts",
+                        "answer": reason,
+                        "why": "could not format a valid, chaining claim from the "
+                               "description (missing value, bad inputs, or model "
+                               "unavailable); SME must add the golden step by hand"})
+                    log.append({"item": cid, "action": "golden_step_manual",
+                                "verifier": vid})
             elif choice == "reject":
                 log.append({"item": cid, "action": "value_mismatch_golden_gap",
                             "verifier": vid, "reason": reason})
@@ -453,7 +847,6 @@ def apply_decisions(pkg: dict, dec: dict, force: bool = False) -> dict:
                 log.append({"item": cid, "action": "temporal_no_pin",
                             "verifier": vid})
 
-    import re
     out["augmented_verifiers_text"] = "\n".join(
         f"{k}: {vmap[k]}" for k in sorted(
             vmap, key=lambda x: (int(re.sub(r"\D", "", x) or 0), x)))
@@ -461,8 +854,23 @@ def apply_decisions(pkg: dict, dec: dict, force: bool = False) -> dict:
                             "saved_at": dec.get("saved_at"),
                             "run_hash": dh}
     out["sme_applied_log"] = log
-    # the questions are answered, so the package is sealed
-    out["judgment_changes_pending_sme"] = []
+    # Clear only the questions that were actually APPLIED (or explicitly
+    # rejected). A question whose answer could not be applied programmatically —
+    # it needs a manual edit to a binary file, or its anchor was not found — stays
+    # in the pending list so the package remains not-scoreable until the SME makes
+    # the edit. This replaces the old unconditional wipe, which sealed the task as
+    # scoreable even when the resolution never reached any artifact.
+    pending = pkg.get("judgment_changes_pending_sme") or []
+    if _resolved_questions:
+        kept = []
+        for i, c in enumerate(pending):
+            cid_q = f"q{i}"
+            if _resolved_questions.get(cid_q, False):
+                continue                      # applied/rejected -> resolved, drop
+            kept.append(c)                    # unapplied -> keep blocking
+        out["judgment_changes_pending_sme"] = kept
+    else:
+        out["judgment_changes_pending_sme"] = []
 
     # Re-derive the frozen graph from the SEALED artifacts. Every SME edit above
     # is now applied — verifier text (incl. reverted splits/rewrites and added

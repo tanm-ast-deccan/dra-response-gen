@@ -20,19 +20,20 @@ Usage:
   python consolidate_scores.py --csv <graded.csv> --out consolidated_scores.csv
 """
 import argparse, csv, re, sys
+_VIDC = r"V(?:\d+[a-z]?|_[A-Za-z0-9][A-Za-z0-9_.]*)"
 
 HEADER_MARKER = "task_id"
 
 # SMEs are inconsistent: some wrote "V1 - text", others "V1: text".
 # Accept EITHER delimiter (dash or colon) after the verifier id, everywhere.
 # A verifier block starts at "V<n><delim>" and runs to the next such marker.
-M_SPLIT = re.compile(r'(?=V\d+\s*[-:]\s)')
+M_SPLIT = re.compile(r'(?=(?:'+_VIDC+r')\s*[-:]\s)')
 M_ID    = re.compile(r'^V(\d+)\s*[-:]\s*(.*)$', re.S)
 # score TRAILS in M: the last "- <0|1>" (or ": <0|1>") before comma/newline/EOL
 M_TRAIL_SCORE = re.compile(r'[-:]\s*([01])\s*,?\s*$')
 
 # N: "V<n><delim> <score>: <justification>"  (score LEADS, then a colon)
-N_SPLIT = re.compile(r'(?=V\d+\s*[-:]\s)')
+N_SPLIT = re.compile(r'(?=(?:'+_VIDC+r')\s*[-:]\s)')
 N_ID    = re.compile(r'^V(\d+)\s*[-:]\s*([01])\s*:\s*(.*)$', re.S)
 N_ID_NOSCORE = re.compile(r'^V(\d+)\s*[-:]\s*(.*)$', re.S)  # fallback if no leading score
 

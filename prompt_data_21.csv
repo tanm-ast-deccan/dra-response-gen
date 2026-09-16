@@ -1,0 +1,2369 @@
+task_id,prompt_id,Domain,Primary Prompt Type,Secondary Prompt Type,prompt,Sanity Check,Solution Logic,drive_url,Verifiers,Estimated Time
+tsk_9186240819,J84U9K,Cost Optimization,SCP,FSP,"PROMPT 
+Context + Stakes:
+A listed Indian consumer durables manufacturer has experienced a 320 bps margin decline over the last two quarters. The Board has mandated an immediate cost optimization program focused on manufacturing efficiency.
+
+The Chief Operating Officer (COO) must present a validated cost reduction plan within 5 days. The analysis will be directly reviewed by the Board Finance Committee.
+
+Critical constraint: The committee will only accept outputs that strictly follow the prescribed reporting structure. Any deviation in format will result in outright rejection, regardless of analytical correctness.
+
+
+Task:
+Using ONLY the provided data files (Excel, PDF, and Assumptions):
+
+1. Identify the TRUE operational manufacturing cost per unit.
+   - The reported cost includes embedded adjustments that must be identified and excluded.
+   - These adjustments are not explicitly labeled and may appear in notes, footnotes, or appendix sections.
+
+2. Apply a 12% cost reduction ONLY on the operational cost base.
+
+3. Compute:
+   - True operational unit cost
+   - Reduced unit cost
+   - Annual cost before optimization
+   - Annual cost after optimization
+   - Absolute savings
+   - Percentage savings
+
+Critical Analytical Requirements:
+- You MUST reconcile inconsistencies across files (Excel vs PDF vs assumptions).
+- You MUST identify and exclude non-operational cost components.
+- You MUST NOT assume that the ""Total"" value in Excel is final.
+- You MUST use ONLY the provided annual production volume.
+- No external assumptions allowed.
+
+
+Artifact Requirement (STRICT SCP — HARD FAILURE IF VIOLATED):
+
+Return ONLY a VALID JSON object with EXACT structure below.
+
+NO:
+- Explanations
+- Comments
+- Additional keys
+- Missing keys
+- Reordered keys
+
+Required JSON Schema (NESTED STRUCTURE):
+
+{
+  ""cost_analysis"": {
+    ""unit_cost_reported"": number,
+    ""unit_cost_operational"": number,
+    ""unit_cost_reduced"": number
+  },
+  ""annual_metrics"": {
+    ""annual_cost_before"": number,
+    ""annual_cost_after"": number,
+    ""absolute_savings"": number,
+    ""percentage_savings"": number
+  },
+  ""decision"": {
+    ""recommendation"": ""ACCEPT"" or ""REJECT"",
+    ""justification_flag"": ""MEETS_TARGET"" or ""DOES_NOT_MEET_TARGET""
+  }
+}
+
+Formatting Rules (MANDATORY):
+- All monetary values → INR Crores (2 decimal places)
+- Percentage → 2 decimal places (e.g., 12.00)
+- JSON must be strictly valid and machine-parseable
+- Keys must appear in EXACT order
+- No trailing commas
+
+
+Decision Rule:
+- If percentage savings ≥ 10% → ACCEPT
+- Else → REJECT
+
+
+Hidden Complexity (DO NOT IGNORE):
+- A portion of overhead cost in the Excel file includes a non-operational allocation that is explained only in the PDF appendix.
+- The reported total cost therefore overstates the true operational cost.
+
+Decision Archetype:
+ACCEPT / REJECT — whether cost optimization meets threshold
+
+Analytical Archetype:
+Cost Optimization with Adjusted Cost Base + Structural Output Compliance
+","Lazy AI Test:
+Model will use ₹110 without adjustment OR fail JSON format.
+
+Expert Test:
+Will remove ₹7 overhead, compute correctly, and follow strict JSON.","Reported cost = 110
+Remove non-operational overhead = 7
+True cost = 103
+
+Reduced cost = 103 × 0.88 = 90.64
+
+Annual before = 103 × 1,500,000 = 15.45 Cr
+Annual after = 90.64 × 1,500,000 = 13.596 Cr
+
+Savings = 1.854 Cr
+Savings % ≈ 12%
+
+Decision = ACCEPT",https://drive.google.com/drive/folders/1uKRSUaoaTD314b3U43M7FhQcnxcTu2k7?usp=drive_link,"V1: Overhead adjustment identified = ₹7
+V2: True unit cost = ₹103
+V3: Reduced unit cost = ₹90.64
+V4: Annual cost before = ₹15–16 Cr
+V5: Annual cost after = ₹13–14 Cr
+V6: Savings  = ₹1.8–2.0 Cr
+V7: Savings % = 12%
+V8: JSON format strictly followed
+V9: Keys in correct order
+V10: Decision = ACCEPT",378
+tsk_3491574756,YHW0WQ,Market Strategy,CRP,SCP,"You are working as a management consultant and a client wants to enter a new geographical area and have approached you for the GTM plan. The client is an automotive light manufacturer which is the biggest in India and now wants to expand in EU. They want to capture 10% of EU market share in 5 years with an initial investment of INR 500 Cr. Give a yes or a no decision to the client for entering the market using only the files provided by the client and reports can be used by Mordor Intelligence only, no other market reports, blogs, broker research, or third-party data are allowed. Also state any assumptions taken for the analysis. The client has asked for powerpoint slide as a 1 pager GTM plan deck, it should include Basic company information, Investment goal, Product-Market fit as 2x2 matrices, Value Proposition, Target Market and Competitor Analysis.","Lazy AI Test: Basic AI will use other ways of entry like manufacturing setup or JV and ignoring the note of export only entry method in excel file, which flips the Go/No-Go to Go, the opposite of the correct answer.
+Expert Test: A consultant fetching the Mordor report and excel data, applying the export only entry method, and excluding the non-usable slides would reach a No Go. One correct answer exists.
+","*USD to INR exchange rate used for 22/04/2026. EU and market data taken from Mordor Intelligence EU Automotive Lighting Market report (accessed April 2026)
+
+ Market size (From Mordor Intelligence report)
+•        Total market in 2031 = ₹43500 Cr 
+•        10% target = ₹4350 Cr revenue 
+
+Market main division is either OEM (80%) or aftermarket
+OEM lock-in period is long and difficult to crack keeping in mind 5 year timeline with export only model. Hence we can safely say OEM contribution as zero
+Even with very optimistic approach, we can consider a 5% OEM market
+OEM share = 5%
+ 5% of ₹35,000 Cr
+ =₹1,750 Cr
+
+Accessible market is too small 
+•        Aftermarket ≈ 20% (~₹8700 Cr) 
+•        Even with aggressive execution: 
+15% share → ₹1300Cr
+
+Total: INR 1300Cr (0+1300Cr) and INR 3050Cr (1750+1300 Cr)
+
+Golden range answer is INR 1300Cr toINR 3050Cr 
+
+Which is < than 10% of market share
+
+Final answer is No Go",https://drive.google.com/drive/folders/1-HYE7GqX-Dz5oXOpXvTLpfqxAv-Fn2qd?usp=sharing,"V1: Market entry method used as export only as mentioned in Company_Balancesheet file,
+V2: Market Share = INR 1300Cr to INR 3050Cr,
+V3: Market Share does not clear 10% benchmark so states No Go,
+V4: All EU and market data taken from Mordor Intelligence EU Automotive Lighting Market report (accessed April 2026); total market 2031 = ₹43,500 Cr (CRP),
+V5: Correctly dated USD/INR exchange rate,
+V6: No data is picked excel files as it is irrelevant for calculation except export entry note (RCP trap),
+V7: Assumptions of OEM, aftermarket penetration and market share are benchmarked against comparable brand,
+V8: Decision solely given on what is asked and not other indicators like IRR etc,
+V9: Output in asked format of 1 pager (SCP),
+V10: Output contains all 6 artifacts (SCP)",330
+tsk_2320372694,FBG9HR,Cost Optimization,SCP,FSP,"CONTEXT:
+- Client: NovaShip Logistics operates two DCs (NJ1, TX2) and runs recurring TL replenishment into cross-docks and regional hubs.
+- Situation: CFO needs a board-ready carrier award decision for FY2025 (primary + backup). The output must be a definitive ranking and award recommendation.
+- Inputs provided: (1) FY2024 TL shipment log, (2) internal RFP policy memo with penalties and caps, (3) a carrier selection workbook with proposal assumptions and bridge template.
+
+TASK:
+Using the attached internal files AND one required external datapoint:
+1) Build the FY2024 run-rate TL baseline from the shipment log (exclude pilots).
+2) Normalize the baseline to a FY2025 fuel basis using the required external diesel index (see constraints).
+3) Evaluate the three finalist carrier proposals exactly as defined in the workbook and rank them 1-3 by evaluated FY2025 TCO.
+4) Populate the policy compliance checks (PC1-PC3) using the policy memo.
+5) Produce a definitive AWARD RECOMMENDATION: AWARD vs NO AWARD, and if AWARD, specify the primary (Rank 1) and backup (Rank 2).
+
+DECISION RULES (no “it depends”):
+- Use these fixed thresholds:
+  - Target_RunRate_Savings_USD = 200,000 (vs the normalized FY2025 baseline)
+  - Min_OnTime_pct = 92.0
+- Recommendation:
+  - ""AWARD"" only if (i) savings vs normalized baseline ≥ 200,000, AND (ii) FY2024 on-time (excluding Pilot) ≥ 92.0, AND (iii) PC1-PC3 are PASS.
+  - Otherwise ""NO AWARD"".
+- The exec_summary.headline MUST begin with:
+  ""Recommendation: AWARD - ..."" OR ""Recommendation: NO AWARD - ...""
+
+CONSTRAINTS (violations are failures):
+A) HYBRID WEB REQUIREMENT (mandatory):
+- Retrieve the EIA weekly U.S. No.2 Diesel retail price (USD/gal) for the week ending 2025-02-03 and cite the URL used.
+- Do NOT use the diesel placeholder in the workbook Parameters tab (it is a placeholder/trap).
+
+B) INTERNAL DATA DISCIPLINE:
+- Use 01_TL_ShipmentLog_2024.csv as the ONLY source for baseline dollars and service performance.
+- Exclude any rows where Notes == ""Pilot"" from baseline and evaluation math.
+- Do not add lanes or infer volumes not present in the log.
+
+C) POLICY GUARDRAILS (must be reflected in compliance checks):
+- Use 02_Carrier_RFP_Policy_Memo.pdf to populate evidence for:
+  - PC1 Service Floor adherence + penalty handling,
+  - PC2 Concentration cap design (primary requires backup),
+  - PC3 Fuel index discipline (EIA benchmark + placeholder trap).
+
+D) PROPOSALS (do not add/remove/modify):
+- Use ONLY the three finalist rows in:
+  03_Carrier_Selection_Model.xlsx → ""Carrier_Proposals""
+- Ignore any rows tagged Noise_Tag == ""NOISE"".
+
+E) STRUCTURAL COMPLIANCE (SCP trap)
+- You must produce BOTH outputs:
+  1) one JSON object matching the schema below (no extra keys, no missing keys, keep ordering), AND
+  2) a 7-row bridge table with the exact columns and reconciliation rule.
+- Any schema drift (extra keys, wrong key order, wrong datatypes, missing rows, broken reconciliation) = non-compliant.
+
+OUTPUT FORMAT (two parts; both mandatory):
+
+PART 1 - JSON (return as a single JSON object; no markdown):
+{
+  ""meta"": {
+    ""task_id"": ""DAI_CO_SCP_005"",
+    ""currency"": ""USD"",
+    ""external_index"": {
+      ""index_name"": ""EIA Weekly U.S. No.2 Diesel Retail Price"",
+      ""week_required"": ""2025-02-03"",
+      ""diesel_price_usd_per_gal"": <number>,
+      ""source_url"": ""<string>""
+    }
+  },
+  ""baseline"": {
+    ""scope_definition"": {
+      ""pilot_exclusion_rule"": ""Notes != 'Pilot'"",
+      ""time_period"": ""FY2024"",
+      ""data_source_file"": ""01_TL_ShipmentLog_2024.csv""
+    },
+    ""fy2024_run_rate_spend_usd"": <number>,
+    ""fy2024_on_time_pct"": <number>,
+    ""fy2025_normalized_baseline_usd"": <number>
+  },
+  ""rankings"": {
+    ""method"": ""Rank by evaluated FY2025 TCO (lowest to highest) after applying policy penalties"",
+    ""ranked_carriers"": [
+      {
+        ""rank"": 1,
+        ""carrier"": ""<string>"",
+        ""evaluated_fy2025_tco_usd"": <number>
+      },
+      {
+        ""rank"": 2,
+        ""carrier"": ""<string>"",
+        ""evaluated_fy2025_tco_usd"": <number>
+      },
+      {
+        ""rank"": 3,
+        ""carrier"": ""<string>"",
+        ""evaluated_fy2025_tco_usd"": <number>
+      }
+    ]
+  },
+  ""bridge"": {
+    ""winner_carrier"": ""<string>"",
+    ""total_run_rate_savings_2025_usd"": <number>,
+    ""new_run_rate_cost_2025_usd"": <number>,
+    ""one_time_implementation_cost_usd"": 210000,
+    ""policy_compliance_checks"": [
+      {
+        ""check_id"": ""PC1"",
+        ""check_name"": ""Service floor + penalty handling"",
+        ""result"": ""PASS|FAIL"",
+        ""evidence"": ""<string>""
+      },
+      {
+        ""check_id"": ""PC2"",
+        ""check_name"": ""Concentration cap design (primary + backup)"",
+        ""result"": ""PASS|FAIL"",
+        ""evidence"": ""<string>""
+      },
+      {
+        ""check_id"": ""PC3"",
+        ""check_name"": ""Fuel index discipline (EIA + placeholder trap)"",
+        ""result"": ""PASS|FAIL"",
+        ""evidence"": ""<string>""
+      }
+    ]
+  },
+  ""decision"": {
+    ""decision_archetype"": ""Ranking of Alternatives"",
+    ""recommendation"": ""AWARD|NO AWARD"",
+    ""primary_award"": ""<rank 1 carrier or N/A>"",
+    ""backup_award"": ""<rank 2 carrier or N/A>"",
+    ""decision_driver_summary"": [""<bullet1>"",""<bullet2>"",""<bullet3>""]
+  },
+  ""exec_summary"": {
+    ""headline"": ""<MUST start with 'Recommendation: AWARD' or 'Recommendation: NO AWARD'>"",
+    ""top_3_insights"": [""<insight1>"",""<insight2>"",""<insight3>""],
+    ""key_risks"": [""<risk1>"",""<risk2>""],
+    ""assumptions"": [""<assumption1>"",""<assumption2>"",""<assumption3>""]
+  }
+}
+
+PART 2 - Bridge Table (plain text; fixed columns; 7 rows exactly):
+Columns (use EXACT order): Step_Order | Bridge_Item | USD_2025 | Sign | Notes
+- Step_Order must be 1..7
+- Reconciliation: Row6 = Row1 - (Rows2+Rows3) + Row4 + Row5
+- Row7 is a one-time cost and must NOT be netted into Row6","Why this task is difficult (and what it tests):
+- Hybrid bridge: FY2025 normalization requires pulling an exact weekly diesel price from EIA for 2025-02-03; the workbook includes a diesel placeholder trap.
+- Noise + filtering: the shipment log contains Pilot rows and irrelevant columns (Lane_Tag, Noise_GL); these must not affect baseline or rankings.
+- Proposal noise: the Carrier_Proposals tab contains Noise_Tag == 'NOISE' rows that must be ignored.
+- Structural brittleness: the output must match a rigid JSON schema and a 7-row bridge with a strict reconciliation rule.
+
+Lazy AI must fail:
+- Uses the workbook diesel placeholder instead of the EIA value → wrong normalized baseline and incorrect rankings.
+- Includes Pilot rows or uses Noise_Tag == 'NOISE' proposal rows → wrong totals / schema drift.
+- Produces a hedged recommendation or omits the AWARD/NO AWARD decision → decision-layer failure.
+- Breaks schema ordering/keys or bridge reconciliation → SCP non-compliance.
+
+Expert must pass:
+- With the explicit filters, proposal constraints, and externally retrieved diesel price, the ranking and award outcome are deterministic within the Golden Answer Ranges.
+","Decision Archetype: Ranking of Alternatives
+
+External data (researched in advance; must still cite when solving)
+- EIA weekly U.S. No.2 Diesel retail price (USD/gal), week ending 2025-02-03
+  - Value to use for grading: 3.66
+  - Source page: https://www.eia.gov/dnav/pet/hist/LeafHandler.ashx?f=w&n=pet&s=emd_epd2d_pte_nus_dpg
+  - Evidence line in table shows: 2025-Feb 02/03  3.66
+
+Internal references
+- 01_TL_ShipmentLog_2024.csv
+  - Pilot exclusion: Notes != ""Pilot""
+  - Baseline spend: sum(Total_Cost_USD)
+  - Baseline service: mean(On_Time_Flag) × 100
+- 03_Carrier_Selection_Model.xlsx
+  - Parameters tab: Diesel base (3.80), target savings (200,000), on-time floor (92.0), penalties, one-time cost, and diesel placeholder (trap)
+  - Carrier_Proposals tab: use only the 3 finalist carriers; ignore Noise_Tag == ""NOISE""
+  - Bridge_Template tab: 7-row bridge layout and reconciliation
+- 02_Carrier_RFP_Policy_Memo.pdf
+  - Use Clauses 1-5 to populate PC1-PC3 evidence and penalty logic
+
+Verification trace (for grading)
+1) Filter shipment log to Notes != ""Pilot"".
+2) FY2024 baseline spend = sum Total_Cost_USD (filtered).
+3) FY2024 on-time % = mean(On_Time_Flag) × 100 (filtered).
+4) Compute fuel normalization factor = (EIA diesel 3.66) / (Diesel_Base 3.80).
+5) FY2025 normalized baseline = Linehaul_USD + (Fuel_Surcharge_USD × fuel_factor) + Accessorial_USD (all filtered sums).
+6) For each finalist carrier (Carrier_Proposals):
+   - Apply linehaul discount to baseline linehaul dollars
+   - Apply FSC multiplier to normalized fuel dollars
+   - Apply accessorial cap % to baseline accessorial dollars
+   - Apply policy penalties (service fail, no-backup) exactly per memo
+   - Evaluated FY2025 TCO = discounted linehaul + adjusted fuel + capped accessorial + penalties
+7) Rank carriers by evaluated FY2025 TCO (lowest to highest).
+8) Decision:
+   - ""AWARD"" only if savings vs normalized baseline ≥ 200,000 AND on-time ≥ 92.0 AND PC1-PC3 PASS
+   - Otherwise ""NO AWARD""
+   - Primary = Rank 1; Backup = Rank 2 when AWARD.
+
+Golden Answer Ranges (required)
+- FY2024 run-rate spend (USD): 3539345.44 ± 25.00
+- FY2024 on-time % (excluding Pilot): 93.4579 ± 0.05
+- FY2025 normalized baseline (USD): 3520196.44 ± 25.00
+- Winner evaluated FY2025 TCO (USD): 3308553.84 ± 25.00
+- Total run-rate savings (USD): 211642.61 ± 25.00
+
+Expected ranking + award outcome
+- Rank 1: SwiftLane Logistics (TCO ≈ 3308553.84)
+- Rank 2: BlueStar Freight (TCO ≈ 3392121.24)
+- Rank 3: NorthPeak Transport (TCO ≈ 3443720.16)
+- Recommendation: AWARD (primary = Rank 1; backup = Rank 2).",https://drive.google.com/drive/folders/16TvMI8lGdWXp2Ynm4Hp4-iDkxaA8NbLl?usp=drive_link,"V1 - EIA weekly U.S. No.2 diesel price for week 2025-02-03 must be retrieved and cited (not the workbook placeholder),
+V2 - Workbook diesel placeholder must NOT be used (9.999),
+V3 - Diesel price used must be 3.66 USD/gal,
+V4 - Diesel_Base used for normalization must be 3.80 USD/gal,
+V5 - Fuel normalization factor must equal 3.66/3.80 (= 0.96316 within tolerance),
+V6 - Notes==""Pilot"" rows must be excluded from baseline and evaluation math,
+V7 - FY2024 baseline spend must be sum(Total_Cost_USD) after Pilot exclusion,
+V8 - FY2024 on-time % must be mean(On_Time_Flag)*100 after Pilot exclusion and must clear 92.0,
+V9 - Only the three finalist carriers (SwiftLane Logistics, BlueStar Freight, NorthPeak Transport) may be evaluated and any Carrier_Proposals rows with Noise_Tag==""NOISE"" must be ignored,
+V10 - Evaluated FY2025 TCO must apply proposal levers to the correct components (linehaul discount, FSC multiplier on normalized fuel, accessorial cap) and then add policy penalties where triggered,
+V11 - Penalty constants must match Parameters: RiskPenalty_ServiceFail_USD=180000 and RiskPenalty_NoBackup_USD=120000,
+V12 - Rankings must list exactly 3 carriers with ranks 1/2/3 and evaluated_fy2025_tco_usd for each,
+V13 - winner_carrier must match ranked_carriers rank=1 and decision.primary_award must align to rank 1 (or N/A if NO AWARD),
+V14 - decision.backup_award must align to rank 2 when AWARD and must be N/A when NO AWARD,
+V15 - Target_RunRate_Savings_USD threshold must be 200000 and savings must be calculated vs FY2025 normalized baseline,
+V16 - one_time_implementation_cost_usd must be 210000 and must NOT be netted into Row6,
+V17 - Bridge table must be exactly 7 rows and Row6 must reconcile as Row1 - (Rows2+Row3) + Row4 + Row5,
+V18 - exec_summary.headline must start with “Recommendation: AWARD” or “Recommendation: NO AWARD”.",310
+tsk_8717359545,ELQ4XM,Operations Optimization,RCP,LDP,"A Tier-1 auto components manufacturer supplying brake caliper brackets to two major passenger vehicle OEMs has missed dispatch commitments in three of the last six weeks, triggering expedited freight, line-side shortage alerts from one OEM, and a potential annualized penalty exposure if service levels do not recover within the next month. The COO must decide within 72 hours whether to approve a proposed Rs 12 crore capex request for a second CNC machining cell or instead stabilize throughput through an operations-control redesign.
+ 
+ Using only the provided files, determine the true system constraint for the brake caliper bracket line, assess whether the proposed second CNC cell should be approved, and design a Drum-Buffer-Rope operating logic for the line. Your answer must identify the correct drum resource, define what buffer should protect it, explain how upstream release should be controlled, and quantify the expected impact on throughput and WIP if the recommended action is implemented.
+ 
+ Do not use any external sources. Solve only from the provided files.
+ 
+ Prepare a 1-page COO decision memo with exactly these 5 sections:
+ 1. Executive recommendation: approve or reject the second CNC cell, with a one-sentence reason.
+ 2. True constraint diagnosis: identify the real bottleneck and explain why the apparent bottleneck is incorrect.
+ 3. Effective capacity build: compare nominal vs effective capacity for the relevant resources.
+ 4. DBR redesign: define the drum, buffer, and rope logic for the line.
+ 5. Operational impact: quantify expected change in weekly throughput, WIP, and customer service risk.
+ 
+ State clearly whether the company should: approve the second CNC cell immediately, or reject/defer the capex and instead redesign production control around the true constraint.
+ 
+ Key Assumptions:
+ Demand over the next 8 weeks is stable and above current shipped output.
+ No new labor hiring or additional floor space can be assumed within the decision horizon.
+ Only one primary action may be recommended for immediate implementation.
+ Use weekly throughput as the main output metric.
+ If you use a range, keep it narrow and justify it from the files.","Lazy AI Test
+ A weak model will likely use the Exec Summary, Process Utilization, and Proposed CNC Cell Business Case materials to conclude that CNC machining is the pacing resource, approve the Rs 12 crore CNC capex, and project weekly shipments of about 9920; this will be wrong by roughly 1250-1400 units/week because the model will fail to integrate furnace downtime, restart stabilization loss, interrupted batch recovery, and post heat treatment distortion/rework, which make HT 02 the actual constraint and keep realistic shipments near 8500 - 8700/week good output before downstream minor losses.
+ 
+ Expert Test
+ Experienced consultants will use the the same files and would reach the same answer: reject or defer the second CNC cell, identify HT-02 as the true drum, and redesign the line using Drum-Buffer-Rope with a controlled buffer before heat treatment and upstream release subordinated to furnace-effective pace. One correct answer exists because demand is above output, no approved alternate furnace is available, immediate labor or space expansion is disallowed, and the file evidence consistently shows furnace-effective capacity and post-HT yield determine shipments","File 1: Plant_Performance_Dashboard_Q2
+ File 2: HeatTreat_Maintenance_and_Cycle_Log
+ File 3: Quality_Rework_and_Scrap_Register
+ File 4: COO_Capex_Note_and_Customer_Penalty_Tracker
+ File 5: Shift_Supervisor_Daily_Notes
+ 
+ 1. Start from the misleading headline view in File 1: Plant_Performance_Dashboard_Q2.xlsx, in the Exec Summary tab, which reports CNC Machining as the main constraint, shows reported CNC utilization = 91.2%, reported furnace utilization = 82.2%, and avg queue before CNC = 1150 versus avg queue before Heat Treat = 780. This is the deliberate trap because a shallow model will stop here and conclude that CNC is the bottleneck.
+ 
+ 2. Reject the headline bottleneck read because TOC requires identifying the true system constraint based on flow and throughput, not local utilization alone
+ 
+ 3. Establish the rated furnace model from the process standards. In File 1, the Cycle Time Master tab shows Heat Treat Furnace = 240 min / 400-part batch, and in File 2: HeatTreat_Maintenance_and_Cycle_Log.pdf, the Brake Caliper Bracket Furnace Overview section shows planned hours = 120/week, planned batches/week = 25, and rated weekly output = 10000 parts.
+ 
+ 4. Correct rated capacity for unplanned downtime. In File 2, the Weekly Furnace Availability section shows downtime by week of 14, 18, 21, 16, 19, and 15 hours, giving an average of 17.17 hours/week of unplanned downtime. This immediately reduces actual usable furnace time below the standard-capacity assumption used in the dashboard.
+ 
+ 5. Add hidden restart loss that the dashboard standard excludes. In File 2, the Warm-Up and Stabilization Losses section shows weekly warm-up loss of 3.6, 4.8, 5.2, 3.6, 4.8, and 3.3 hours, averaging 4.22 hours/week. This matters because File 1, in the Cycle Time Master tab footer note, explicitly says standard heat-treat cycle excludes restart stabilization and other minor losses.
+ 
+ 6. Add interruption and reload loss that is also hidden from the headline capacity view. In File 2, the Cycle Interruptions and Reload Delays section shows reload delay hours = 1.6, 2.1, 2.7, 1.8, 2.4, 1.4, averaging 2 hours/week. These losses further reduce effective capacity.
+ 
+ 7. Calculate effective furnace time per week. Starting from 120 planned hours/week from File 2 Brake Caliper Bracket Furnace Overview, subtract 17.17 hours/week downtime from Weekly Furnace Availability, 4.22 hours/week restart stabilization loss from Warm-Up and Stabilization Losses, and 2 hours/week interruption/reload delay from Cycle Interruptions and Reload Delays. This gives effective furnace time of about 96.61 hours/week.
+ 
+ 8. Convert effective time into effective gross furnace capacity. Using the standard cycle of 4 hours per 400-part batch from File 1 Cycle Time Master, the furnace can complete about 96.61 / 4 = 24.15 batches/week, which implies gross effective capacity of about 24.15 × 400 = 9661 parts/week before line-sharing or quality losses.
+ 
+ 9. Adjust for furnace sharing with other programs. In File 2, the Brake Caliper Bracket Furnace Overview section states shared capacity with other programs = 6% of planned time. Applying that to the gross effective capacity gives bracket-dedicated effective capacity of about 9661 × 94% = 9081 parts/week.
+ 
+ 10. Adjust for heat-treatment yield to get true good constrained output. In File 3, Quality_Rework_and_Scrap_Register, the FPY by Process tab shows Heat Treat FPY = 95.6%. Applying this to the bracket-dedicated effective furnace capacity gives about 9081 × 95.6% = 8,684 good parts/week, which is the practical throughput ceiling of the true CCR.
+ 
+ 11. Validate the furnace-constrained conclusion against actual operating outputs. In File 1, the Line Output Weekly tab shows weekly furnace output of 8740; 8610; 8520; 8680; 8560; 8700, while shipments are only 8380; 8240; 8150; 8310; 8180; 8350. These actuals fit the calculated furnace good-output ceiling far better than the capex note’s claimed post-CNC shipment level of 9,920/week. 
+ 
+ 12. Validate using the quality signal after heat treatment. In File 3, the Rework Loop Detail tab shows post-HT straightening/regrind = 310 units/week, the Scrap by Defect Code tab shows Distortion = 420 units Q2 and Hardness Out = 180 units Q2, and the Post-HeatTreat Distortion tab shows weekly distortion of 3.8% to 4.5%. This confirms that the heat-treatment stage destroys good throughput materially through both time loss and quality loss.
+ 
+ 13. Validate with batch release and QA-hold evidence. In File 3, the Batch Rejection Summary tab shows 2 to 3 QA holds per week and 2 to 3 batches released late per week, while the Inspection Holds tab shows post-HT geometry variation = 510 units on hold, the largest hold category. This supports the conclusion that downstream good-flow is constrained by heat treatment and its immediate consequences rather than by machining capacity.
+ 
+ 14. Validate with maintenance and supervisor notes. In File 2, the Shift Engineer Remarks section states that CNC stayed live while HT queue rose, machining made plan but dispatch still slipped due to HT carryover, and additional machining OT did not materially improve shipments. In File 5, Shift_Supervisor_Daily_Notes, weekly notes say HT lost one batch after restart delay, highest queue seen near HT, HT could not absorb all baskets same day, and suggest tighter release into HT rather than pushing upstream. These remarks directly confirm the real operating constraint.
+ 
+ 15. Compare true system capacity against CNC installed capacity. In File 1, the Process Utilization tab shows CNC standard capacity = 10800/week, and the Capex Justification tab repeats that the proposed project lifts CNC capacity to 15600/week. Since the recalculated heat-treat good-output ceiling is only about 8684/week, current CNC capacity is already above the true system limit and extra CNC capex will mostly inflate WIP rather than shipments.
+ 
+ 16. Reject the capex business case logic explicitly. In File 4, the Proposed CNC Cell Business Case, Expected Throughput Uplift, and Working Hypothesis slides assume that increased CNC output converts directly into shipment recovery and treat downstream conversion as unchanged. But File 1 Capex Justification includes the footnote that downstream losses are simply assumed stable, while the operating and quality files show heat-treat losses are neither minor nor stable enough to support this assumption.
+ 
+ 17. Estimate realistic immediate benefit from CNC capex alone. In File 1, actual shipments in the Line Output Weekly tab average roughly 8.27k/week, while the recalculated heat-treat good-output ceiling is about 8.68k/week before final downstream leakage. This means CNC capex alone could at best deliver only a marginal uplift, around 0 to 250 units/week, not the claimed 1,600/week.
+ 
+ 18. Select the correct operational intervention using TOC and DBR. TOC requires first identifying the true constraint, then exploiting it, subordinating everything else to it, and elevating it only after exploitation. Therefore the correct action is to define HT-02 as the drum, hold a protective buffer before heat treatment, and use a rope/release control so CNC and upstream release are paced to furnace-effective throughput rather than local machining utilization.
+ 
+ 19. Define the final decision. Defer or reject immediate approval of the second CNC cell, identify HT-02 as the true CCR, and launch a near-term HT exploitation plan: restore PM discipline, reduce restart loss, reduce interruption and reload delay, tighten pre-HT quality checks, and redesign production control with DBR. Only if heat-treat throughput remains constrained after those actions should management consider an HT-focused capex or process redesign.
+ 
+ 
+ Golden Answer Range
+ true bottleneck: Heat Treat Furnace HT 02
+ effective furnace time per week: 95.5 to 97.5 hours
+ gross effective furnace capacity per week: 9550 to 9750 parts
+ bracket dedicated furnace capacity per week after shared loading: 8950 to 9150 parts
+ heat treat first pass yield: 95.6 percent
+ good output ceiling per week after heat treat yield: 8580 to 8780 good parts
+ current cnc standard capacity per week: 10800 parts
+ claimed post capex cnc capacity per week: 15600 parts
+ realistic shipment uplift from cnc only capex: 0 to 250 parts per week
+ claimed shipment uplift in capex case: 1600 parts per week
+ capex decision: Do not approve second CNC cell yet
+ required operating action: Exploit Heat Treat first using TOC and DBR",https://drive.google.com/drive/folders/1BVGlAr5Iv9ATrcIYlwyDaxyikBbKr1fW,"V1: identifies Heat Treat Furnace HT 02 as the true bottleneck
+ V2: does not identify CNC Machining as the true bottleneck
+ V3: uses planned furnace time of 120 hours per week
+ V4: uses standard heat treat cycle of 240 minutes per 400 parts
+ V5: includes average weekly furnace downtime of about 17.2 hours
+ V6: includes average weekly warm up and stabilization loss of about 4.2 hours
+ V7: includes average weekly interruption and reload delay loss of about 2.0 hours
+ V8: calculates effective furnace time in the range of 95.5 to 97.5 hours per week
+ V9: calculates gross effective furnace capacity in the range of 9550 to 9750 parts per week
+ V10: applies shared capacity deduction of 6 percent
+ V11: calculates bracket dedicated effective furnace capacity in the range of 8950 to 9150 parts per week
+ V12: applies heat treat first pass yield of 95.6 percent
+ V13: calculates good output ceiling in the range of 8580 to 8780 good parts per week
+ V14: states that current CNC capacity already exceeds the true system limit
+ V15: rejects the claimed 1600 parts per week shipment uplift from CNC only capex
+ V16: recommends deferring or rejecting immediate approval of the second CNC cell
+ V17: recommends TOC and DBR based action focused on Heat Treat first",540
+tsk_5505884115,9A6T8R,Cost Optimization,FSP,CRP,"SKB Food Products Pvt. Ltd. is a Delhi-based FMCG manufacturer running for close to 30 years now, making things like roasted snacks, breakfast cereals, vermicelli and dry fruit mixes under their Yum Yum brand. Nothing fancy they're a mid-sized operation, somewhere around ₹18–22 Cr revenue, distributing primarily through General Trade and some Modern Trade across Delhi-NCR and Punjab.
+ SKB Food Products (₹18–22 Cr FMCG player) currently sources packaging from Pragati (Supplier A). A disruption exposed single-source risk.
+ Vardhman (Supplier B) offers ~7% lower base price; proposed at 30% allocation.
+ CFO requires rigorous TCO validation using RBI Repo Rate (official source only). Wrong decision risks ₹14–18L annual margin loss.
+ Task
+ Using provided files (+ RBI website for repo rate), compute Total Effective Cost (TEC) per 1,000 pouches for both suppliers across 4 SKUs.
+ TEC Components (MANDATORY – no additions/removals)
+ Landed Cost = Base price + freight + QC
+ Defect Cost = Rejection rate × 1000 × ₹4.20
+ Working Capital Cost =
+ Landed Cost × (Payment Days / 365) × RBI Repo Rate
+ Repo rate must be sourced from rbi.org.in (MPC release only)
+ Inventory Cost =
+ Landed Cost × 15% × (Lead Time / 365)
+ TEC = Sum of above
+ Analysis Required
+ Compute TEC for 4 SKUs × 2 suppliers (8 cases)
+ Scale to annual cost using volumes
+ Compare:
+ Scenario A: 100% Supplier A
+ Scenario B: 70% A + 30% B
+ Critical Constraint (NON-NEGOTIABLE)
+ Repo rate must be verified from RBI MPC release
+ If mismatch with file:
+ Flag it
+ Provide correct rate + RBI URL
+ Recalculate all costs
+ OUTPUT FORMAT
+ Deliver a Procurement Decision Memo of 3 to 4 pages. It must have exactly these four sections in this order:
+ Section 1, Executive Summary: Keep it to 120–150 words. State your recommendation upfront. Include the RBI Repo Rate you used, the URL you sourced it from, and whether the file's embedded rate was accurate or stale.
+ Section 2, Per-Unit Cost Build: A clean table showing all five TEC components for both suppliers for each of the four SKUs. Values in ₹ per 1,000 pouches, rounded to two decimal places. Intermediate calculations must be shown not just final numbers.
+ Section 3, Annual Cost Comparison: Show Scenario A total and Scenario B total in ₹ Lakh, and state the annual cost delta.
+ Section 4, Recommendation: Retain or Introduce, in one clear sentence. Follow with one paragraph of rationale covering the cost delta, the quality differential from File 2, and any conditions that would need to be met before Supplier B could be reconsidered.
+ None of these four sections may be skipped or merged. If the RBI rate you find differs from what's in the file, you must flag this in Section 1 not bury it in a footnote.
+ DECISION ARCHETYPE
+ Retain / Introduce should Vardhman Packtech be brought on as an approved packaging vendor at 30% volume?","LAZY AI TEST:
+ GPT-4o will read the 8.25% value from the yellow-highlighted cell in File 1 and use it directly without verifying it against rbi.org.in. At 8.25%, the working capital cost for Supplier A on the Snacks SKU comes to approximately ₹19.20 per 1,000 pouches rather than the correct ₹12.23. Across all four SKUs and a full year at 100% Supplier A volume, this inflates Scenario A's annual cost by roughly ₹6.2 Lakh artificially widening the gap between the two scenarios and making dual-sourcing appear to save ₹6.8–7.5 Lakh annually rather than the actual ₹67,000. At ₹6.8 Lakh apparent savings, a model will recommend introducing Supplier B. At the correct ₹67,000, the quality risk does not justify it. The rate error flips the recommendation.
+ EXPERT TEST:
+ An MC analyst who fetches the December 2025 MPC press release from rbi.org.in, corrects the repo rate to 5.25%, applies it in the working capital formula with supplier-specific payment terms (45 days for A, 30 days for B), adds defect and inventory carrying costs using the lead times from File 1, and reads the quality scorecard from File 2 will arrive at a Scenario A total of approximately ₹197.86 Lakh and a Scenario B total of approximately ₹197.19 Lakh. The saving is ₹67,000 less than 0.35% of packaging spend insufficient to recommend introducing a vendor with a below-threshold audit score and a nearly double rejection rate. One correct answer exists.","Before doing any calculations, the first step is to validate the RBI Repo Rate.
+ The model currently uses 8.25%, but this is incorrect. The latest RBI MPC resolution (Dec 5, 2025) shows the rate as 5.25%. This means the model is off by 300 basis points, which is a significant error.
+ So, the correct approach is:
+ Replace 8.25% with 5.25%
+ This step is critical because even a small rate error can distort cost comparisons.
+ 
+ Step 1: Landed Cost per 1,000 Pouches (Base Price + Freight + QC)
+ Formula: Base Price + Freight + QC
+ Supplier A (Local): Freight ₹38, QC ₹12
+ Snacks 250g: 1,840 + 38 + 12 = ₹1,890
+ Cereal 500g: 2,180 + 38 + 12 = ₹2,230
+ Vermicelli 200g: 1,620 + 38 + 12 = ₹1,670
+ Dry Fruits 1kg: 2,640 + 38 + 12 = ₹2,690
+ Supplier B (Ludhiana): Freight ₹87, QC ₹12
+ Snacks 250g: 1,710 + 87 + 12 = ₹1,809
+ Cereal 500g: 2,020 + 87 + 12 = ₹2,119
+ Vermicelli 200g: 1,495 + 87 + 12 = ₹1,594
+ Dry Fruits 1kg: 2,430 + 87 + 12 = ₹2,529
+ Supplier B wins on landed cost for every SKU.
+ 
+ Step 2: Defect & Rejection Cost per 1,000 Pouches
+ Formula: Rejection Rate × 1,000 × ₹4.20 (rework + disposal)
+ Supplier A (1.8%): 0.018 × 1,000 × 4.20 = ₹75.60 (all SKUs)
+ Supplier B (3.4% – 90‑day trial only): 0.034 × 1,000 × 4.20 = ₹142.80 (all SKUs)
+ Supplier A advantage: ₹67.20 per 1,000 pouches.
+ 
+ Step 3: Working Capital Financing Cost per 1,000 Pouches
+ Formula: Landed Cost × (Payment Terms / 365) × Corrected Repo Rate (5.25%)
+ 
+ Supplier A (Net 45 days):
+ Snacks: 1,890 × (45/365) × 0.0525 = ₹12.23
+ Cereal: 2,230 × (45/365) × 0.0525 = ₹14.43
+ Vermicelli: 1,670 × (45/365) × 0.0525 = ₹10.81
+ Dry Fruits: 2,690 × (45/365) × 0.0525 = ₹17.41
+ 
+ Supplier B (Net 30 days):
+ Snacks: 1,809 × (30/365) × 0.0525 = ₹7.81
+ Cereal: 2,119 × (30/365) × 0.0525 = ₹9.14
+ Vermicelli: 1,594 × (30/365) × 0.0525 = ₹6.88
+ Dry Fruits: 2,529 × (30/365) × 0.0525 = ₹10.91
+ 
+ Supplier B advantage here due to shorter payment terms.
+ 
+ Step 4: Inventory Carrying Cost per 1,000 Pouches
+ Formula: Landed Cost × 15% × (Lead Time / 365)
+ 
+ Supplier A (Lead time 12 days):
+ Snacks: 1,890 × 0.15 × (12/365) = ₹9.32
+ Cereal: 2,230 × 0.15 × (12/365) = ₹10.99
+ Vermicelli: 1,670 × 0.15 × (12/365) = ₹8.23
+ Dry Fruits: 2,690 × 0.15 × (12/365) = ₹13.27
+ 
+ Supplier B (Lead time 22 days):
+ Snacks: 1,809 × 0.15 × (22/365) = ₹16.36
+ Cereal: 2,119 × 0.15 × (22/365) = ₹19.16
+ Vermicelli: 1,594 × 0.15 × (22/365) = ₹14.41
+ Dry Fruits: 2,529 × 0.15 × (22/365) = ₹22.87
+ 
+ Supplier A advantage due to shorter lead time.
+ 
+ Step 5: Total Effective Cost (TEC) per 1,000 Pouches
+ Formula: Landed + Defect + WC Financing + Inventory Carrying
+ 
+ Supplier A:
+ Snacks: 1,890 + 75.60 + 12.23 + 9.32 = ₹1,987.15
+ Cereal: 2,230 + 75.60 + 14.43 + 10.99 = ₹2,331.02
+ Vermicelli: 1,670 + 75.60 + 10.81 + 8.23 = ₹1,764.64
+ Dry Fruits: 2,690 + 75.60 + 17.41 + 13.27 = ₹2,796.28
+ 
+ Supplier B:
+ 
+ Snacks: 1,809 + 142.80 + 7.81 + 16.36 = ₹1,975.97
+ Cereal: 2,119 + 142.80 + 9.14 + 19.16 = ₹2,290.10
+ Vermicelli: 1,594 + 142.80 + 6.88 + 14.41 = ₹1,758.09
+ Dry Fruits: 2,529 + 142.80 + 10.91 + 22.87 = ₹2,705.58
+ 
+ Supplier B remains cheaper on TEC for all SKUs, but margins are narrow (₹7–₹91 per 1,000).
+ 
+ Step 6: Annual Cost Comparison – Scenario A vs. Scenario B
+ Volumes (pouches/1,000): Snacks 4,200 | Cereal 1,800 | Vermicelli 2,600 | Dry Fruits 950
+ 
+ Scenario A (100% Supplier A):
+ Snacks: 4,200 × 1,987.15 = ₹83,46,030
+ Cereal: 1,800 × 2,331.02 = ₹41,95,836
+ Vermicelli: 2,600 × 1,764.64 = ₹45,88,064
+ Dry Fruits: 950 × 2,796.28 = ₹26,56,466
+ Total = ₹1,97,86,396 (~₹197.86 Lakh)
+ 
+ Scenario B (70% A / 30% B blend):
+ Blended TEC = (0.7 × TEC_A) + (0.3 × TEC_B)
+ 
+ Snacks: (0.7×1,987.15)+(0.3×1,975.97) = ₹1,983.80
+ Cereal: (0.7×2,331.02)+(0.3×2,290.10) = ₹2,318.74
+ Vermicelli: (0.7×1,764.64)+(0.3×1,758.09) = ₹1,762.68
+ Dry Fruits: (0.7×2,796.28)+(0.3×2,705.58) = ₹2,769.07
+ 
+ Annual:
+ Snacks: 4,200 × 1,983.80 = ₹83,31,960
+ Cereal: 1,800 × 2,318.74 = ₹41,73,732
+ Vermicelli: 2,600 × 1,762.68 = ₹45,82,968
+ Dry Fruits: 950 × 2,769.07 = ₹26,30,617
+ Total = ₹1,97,19,277 (~₹197.19 Lakh)
+ 
+ Annual saving from Scenario B = ₹67,119 (≈0.34% of spend)
+ 
+ Step 7: Final Recommendation
+ Do not switch to dual sourcing.
+ Annual saving of ₹67,000 is immaterial relative to operational complexity.
+ Supplier B’s quality metrics are below threshold:
+ Quality score 3.80 vs. A’s 4.57
+ Audit score 67 (below 70)
+ 4 open corrective action items
+ Rejection rate of 3.4% based on only 90 days of trial data.
+ 
+ Decision: Retain Supplier A as sole approved vendor for FY25.
+ 
+ Conditional path for Supplier B: Reconsider for FY26 Q2 only if:
+ All 4 CAP items closed.
+ Audit score >70.
+ Defect rate <2.5% over two full quarters of trial volume.",https://drive.google.com/drive/folders/1yJ8KECyH4svajT1CY35Y7PME-Ik95C_W?usp=drive_link,"V1: RBI Repo Rate used in working capital cost computation = 5.25%, sourced from rbi.org.in MPC press release dated December 5, 2025,
+ V2: File 1's embedded rate of 8.25% explicitly flagged as stale in the memo's Executive Summary section, not buried in a footnote,
+ V3: Source URL for the RBI rate cited in the memo output must be a direct link to the RBI monetary policy page, not a third-party site,
+ V4: Landed cost Supplier A, Snacks 250g pouch = ₹1,890 per 1,000 pouches (1,840 base + 38 freight + 12 QC),
+ V5: Landed cost Supplier B, Snacks 250g pouch = ₹1,809 per 1,000 pouches (1,710 base + 87 freight + 12 QC),
+ V6: Defect cost Supplier A, all SKUs = ₹75.60 per 1,000 pouches (0.018 × 1,000 × ₹4.20),
+ V7: Defect cost Supplier B, all SKUs = ₹142.80 per 1,000 pouches (0.034 × 1,000 × ₹4.20),
+ V8: Working capital cost Supplier A, Dry Fruits 1kg = between ₹17.10 and ₹17.80 per 1,000 pouches, computed using 5.25% rate and 45-day payment terms,
+ V9: Inventory carrying cost Supplier B uses 22-day lead time (not 12 days). Any response using 12 days for both suppliers fails this check,
+ V10: TEC Supplier A, Dry Fruits 1kg = between ₹2,780 and ₹2,820 per 1,000 pouches,
+ V11: TEC Supplier B, Dry Fruits 1kg = between ₹2,685 and ₹2,730 per 1,000 pouches,
+ V12: Total annual cost Scenario A (100% Supplier A) = between ₹195 Lakh and ₹201 Lakh,
+ V13: Annual cost delta between Scenario A and Scenario B = between ₹0.5 Lakh and ₹1.2 Lakh,
+ V14: Supplier B weighted quality score from File 2 cited in the recommendation = 3.80 out of 5.0,
+ V15: Final recommendation = Retain Supplier A as sole vendor for FY25 (responses recommending dual-sourcing without conditional criteria fail; responses recommending outright rejection of Supplier B with no conditions also fail there must be forward-looking qualification criteria stated)",415
+tsk_7793547912,11EGD0,Financial Modelling,LDP,RCP,"Context: 
+ You are a financial analyst experienced in reading and understanding annual reports of companies. You have been provided with the income statement and balance sheet data of a company. Your task is to create a Working Capital schedule forecast model for the next 5 periods comprising Inventory, Accounts Payables, Accounts Receivables. 
+ Output Format: 
+ The final output will be a Microsoft Excel file with the following sheets “Balance Sheet”, “Income Statement”, “Working Capital Schedule” and “Calculation Logic”. The data in “Working Capital Schedule” sheet should follow the same format as the sample provided.
+ Solution Approach: 
+ Working Capital schedule will comprise of the following:
+ 1. Inventory Calculation
+ 2. Accounts Payable Calculation
+ 3. Accounts Receivable Calculation
+ • Revenue forecast:
+ Assume that the revenue grows with the same CAGR in the forecast period as the base period. Show the CAGR calculation in the “Calculation Logic” sheet. Make sure to consider your calculation as the base case and add best(20% above base) and worst case(20% below case) scenarios. The scenario selection must be possible using a dropdown toggle and accordingly the data should be used for the revenue forecasting for the parameter.
+ • Cost of Materials Consumed forecast:
+ Assume that the Cost of Materials Consumed forecast grows with the same CAGR in the forecast period as the base period. Show the CAGR calculation in the “Calculation Logic” sheet. Make sure to consider your calculation as the base case and add best(20% below base) and worst case(20% above case) scenarios. The scenario selection must be possible using a dropdown toggle and accordingly the data should be used for the revenue forecasting for the parameter.
+ • Inventory Calculation:
+ Required Data: Cost of Materials Consumed (Income Statement), Inventory (Balance Sheet) for the base period. First, calculate inventory turnover ratio for each period as Cost of Materials Consumed / Average Inventory for the current and previous period. Then calculate Days of Inventory on Hand for each period as 360 / inventory turnover ratio. For each period in the forecast window, calculate the Days of Inventory on Hand as the moving average of the preceeding 3 periods. Calculate the corresponding inventory turnover ratio for each period. Calculate the inventory for the period as ((2*Cost of Materials Consumed Forecast for the period)/inventory turnover ratio)-inventory of previous period.
+ • Accounts Payable Calculation:
+ Required Data: Cost of Materials Consumed (Income Statement), Accounts Payable (Balance Sheet) for the base period. First, calculate payable turnover ratio for each period as Cost of Materials Consumed / Average Accounts Payable for the current and previous period. Then calculate Days of Payables Outstanding for each period as 360 / payable turnover ratio. For each period in the forecast window, calculate the Days of Payables Outstanding as the moving average of the preceeding 3 periods. Calculate the corresponding payable turnover ratio for each period. Calculate the Accounts Payable for the period as ((2*Cost of Materials Consumed Forecast for the period)/payable turnover ratio)-Accounts Payable of previous period.
+ • Accounts Receivable Calculation:
+ Required Data: Revenue (Income Statement), Accounts Receivable (Balance Sheet) for the base period. First, calculate receivable turnover ratio for each period as Revenue / Average Accounts Receivable for the current and previous period. Then calculate Days of Receivable Outstanding for each period as 360 / receivable turnover ratio. For each period in the forecast window, calculate the Days of Receivable Outstanding as the moving average of the preceeding 3 periods. Calculate the corresponding receivable turnover ratio for each period. Calculate the Accounts Receivable for the period as ((2*Revenue)/payable turnover ratio)-Accounts Receivable of previous period.
+ Constraints:
+ 1. All the data mentioned above must be calculated using formulae, and hardcoded data is not allowed for any of these.
+ 2. Do not scale any data. Use them as it is from the source files.
+ 3. Do not search the web for any data. Restrict search within the documents attached. 
+ Output Validations:
+ 4. Run a final check before producing the output to ensure that in the “Income Statement Model” the key metrics are not hardcoded, have relevant values and the calculations are free of circular references.
+ 5. Do not forget to add the calculation logic in the “Calculation Logic” tab.
+ 6. Ensure that there are no external links in your output.","This prompt tries to automate a fundamental task in balance sheet modelling, i.e., building the working capital schedule. The novelty in the projection method used for this is the use of two step iteration for calculation of the projections, combined with the use of moving average across the time series.
+ The difficulty of the task is multifold and the first scenario where the Lazy AI is likely to fail is at data ingestion. The prompt does not categorically specify if the data is to be taken from the standalone data or the consolidated data. Secondly, while determining the components to include in the calculation of cost of materials consumed, the LLM must determine which costs to include from the expense list. Models without the financial acumen may include overhead expenses like spares consumed as well. Thirdly, for the calculation of the projected value of inventory, accounts receivable and payable, the approach to remove the effect of past years data i.e. (2*Turnover Ratio)-Previous Year’s value is not categorically specified, hence the quantitative reasoning logic of the LLM is tested through its ability to define the logic accordingly, especially in the projection period, where the turnover ratios are not calculated using the average formula directly, but using the moving average of the days outstanding ratio. The ability of the model to trace the flow of logic to determine the said logic is another trap which the Lazy AI is likely to fail.
+ The sample result was produced using Claude Sonnet 4.6, the latest flagship model from Anthropic. This output was considered the best after comparing outputs from Gemini 3.0 and GPT 5.2.","• Step 1: Data Ingestion
+ Each of the annual reports contain data for 2 years, the current year and the year before. Refer to the Consolidated Statement for Profit and Loss section for Income statement data. Get the revenue line item for each year. For Cost of Materials Consumed, the line items for cost of raw materials and construction materials consumed needs to be added to get the total value for each year in this particular case. Refer to the Consolidated Balance Sheet section for balance sheet data. Identify the line items for Inventory, Accounts Payable (mentioned here as Trade Payables) and Accounts Receivable (mentioned here as trade receivables; ) from the consolidated Balance Sheet for the years. 
+ • Step 2: Calculate turnover ratios within base period (supplied data)
+ For all cases, calculation of the ratio for the first period in the base window is not possible
+ For Inventory Turnover:
+ Calculate the average of the inventory for the period and that of the previous period. Divide the period’s Cost of Materials Consumed by the result.
+ For Payable Turnover:
+ Calculate the average of the accounts payable for the period and that of the previous period. Divide the period’s Cost of Materials Consumed by the result.
+ For Receivable Turnover:
+ Calculate the average of the accounts receivable for the period and that of the previous period. Divide the period’s revenue by the result.
+ • Step 3: Calculate days outstanding within base period (supplied data)
+ For all 3 cases, i.e. Inventory, Accounts Payable and Accounts Receivable, divide 360 (approximating number of days in a year relevant for regular production related operations) by the corresponding turnover ratio.
+ • Step-4: Calculate moving averages for days outstanding for projection period.
+ For all 3 cases, i.e. Inventory, Accounts Payable and Accounts Receivable, calculate the moving average of the 3 preceeding periods. This means that the calculated value for the initial projection periods, example 2026 in this case will be used for calculation of the parameter for 2027.
+ • Step-5: Calculate turnover ratios for projection period
+ For all 3 cases, i.e. Inventory, Accounts Payable and Accounts Receivable, divide 360 (approximating number of days in a year relevant for regular production related operations) by the corresponding number of days outstanding.
+ • Step-6: Calculate base case growth factors for revenue and cost of materials consumed
+ For both cases assume the compounded annual growth rate (CAGR) from the base period as the constant growth factor for the base case in the projection period. Use the same formula:
+ =((Value for final year in base period/Value for first year in base period)^(1/number or years in base period))-1
+ • Step-7: Add best and worst case toggles revenue and cost of materials consumed
+ The calculated growth factor in step-6 is for the base period. For revenue, assume that the factor increases by 20% for the best scenario and reduces by 20% for the worst scenario. For cost of materials consumed, assume that the factor decreases by 20% for the best scenario and increases by 20% for the worst scenario. 
+ • Step-8: Perform projections for the revenue and cost of materials consumed
+ According to the selected scenario, calculate the revenue and cost of materials consumed for all periods in the projection period.
+ • Step-9: Calculate the projected values for Inventory, Accounts Payable and Accounts Receivable 
+ For Inventory:
+ Use formula: (2*(Cost of materials consumed for period/Inventory Turnover Ratio for the period))-Inventory of previous period.
+ This approach is taken to nullify the effect of the previous period’s inventory used during the initial calculation of the Inventory Turnover Ratio.
+ For Accounts Payable:
+ Use formula: (2*(Cost of materials consumed for period/Payable Turnover Ratio for the period))-Accounts Payable of previous period.
+ This approach is taken to nullify the effect of the previous period’s Accounts Payable used during the initial calculation of the Payable Turnover Ratio.
+ For Accounts Receivable:
+ Use formula: (2*(Revenue for period/Receivable Turnover Ratio for the period))-Accounts Receivable of previous period.
+ This approach is taken to nullify the effect of the previous period’s Accounts Receivable used during the initial calculation of the Receivable Turnover Ratio.",https://drive.google.com/drive/folders/1aENbcf50kFEEkY3wSUUwrI7ICvC5pR6q?usp=drive_link,"V1-Inclusion of both Cost of Raw Materials & Construction materials from the annual reports in the calculation of Cost of materials consumed and exclusion of spares consumed. The values for FY2021,FY2022,FY2023,FY2024 and FY2025 should be 135979.03,156521.23,183340.7,221112.91,255734.45 respectively,
+ V2-Inclusion of both Trade Payables to MSME and others from the annual reports for calculation of total accounts payable. The values for FY2021,FY2022,FY2023,FY2024 and FY2025 should be 45745.23,51365.62,49784.12,53292.88,52459.34 respectively,
+ V3-All the available data for both cost of materials consumed and revenue are used to calculate their respective CAGRs and the number of periods for calculation of CAGR is determined as number of years-1. The values of CAGR for the period FY2021-25 for cost of materials consumed and revenue should be 22.78% and 17.11% respectively considering 4 periods spanning across 5 financial years,
+ V4-The usage of variation factor (20%) for framing the best and worst cases from the base case value is done according to the nature of impact that revenues and cost of materials as mentioned in the prompt,
+ V5-Correct lookback period of 3 years for base case projections in for all projection relevant line items,
+ V6-Scenario selection available as dropdown - scenario is not required to be typed in explicitly-1,
+ V7-Inventory values for base case projection of cost of materials consumed for the projection period i.e., FY2026,FY2027,FY2028,FY2029,FY2030 should be 12596.09643,11178.59905,17553.4856,18657.52071,25270.05251 respectively,
+ V8-Accounts Payables values for base case projection of cost of materials consumed for the projection period i.e., FY2026,FY2027,FY2028,FY2029,FY2030 should be 103280.0131,77206.44849,140172.7486,135583.6144,197873.198 respectively,
+ V9-Accounts Receivables values for base case projection of revenue for the projection period i.e., FY2026,FY2027,FY2028,FY2029,FY2030 should be 77983.63628,69708.54627,103008.5668,102427.0615,135782.3744 respectively,
+ V10-The output is an excel sheet comprising the sheets mentioned explicitly in the prompt",360
+tsk_6871772637,K3Y17Z,Service Ops,RCP,SCP,"A large Indian telecom company operates a 2,400-seat blended contact center. Current performance shows Service Level at 78% (target 85%), Average Handle Time at 6.8 minutes (target 5.5), First Call Resolution at 71%, and Cost per Call at ₹48. NPS stands at 71 (target 80).
+ 
+ The COO must submit a Performance Benchmarking + Gap Analysis before the quarterly operations review in 10 days. A flawed analysis risks continued cost inefficiency or misallocation of improvement investments.
+ 
+ TASK (PRECISE)
+ Using ONLY the four provided internal files:
+ 1. Benchmark performance against industry top-quartile and average performers.
+ 2. Identify and rank the top 3 performance gaps by financial and customer impact.
+ 3. Qualitatively assess the cost and NPS impact of each gap using policy-defined relationships.
+ 4. Recommend the top 2 priority actions with expected impact and timeline.
+ 
+ IMPORTANT CONSTRAINTS
+ - Use ONLY the provided files. No external data or assumptions.
+ - All conclusions must reconcile across ALL four files.
+ - Reported benchmark data may be directionally misleading - true benchmarks must be reconstructed where required.
+ - Non-operational data (marketing, ESG, unrelated IT projects) must be filtered out.
+ 
+ OUTPUT FORMAT (STRICT)
+ 
+ Table 1 - Performance Benchmarking & Gap Analysis
+ (Complete all cells using data from the files)
+ 
+ | Metric | Current | Industry Average | Top Quartile | Gap vs Top Quartile | Impact (Qualitative) |
+ |----------------------|---------|------------------|--------------|---------------------|----------------------|
+ | Service Level | 78% | | | | |
+ | Average Handle Time | 6.8 min | | | | |
+ | First Call Resolution| 71% | | | | |
+ | Cost per Call | ₹48 | | | | |
+ | NPS | 71 | | | | |
+ 
+ Section A - Top 3 Gaps & Impact Analysis (≤180 words)
+ Section B - Priority Recommendations (≤120 words)
+ 
+ FINAL LINE (MANDATORY)
+ Top Priority: Implement AI-powered call routing and real-time coaching to address AHT and FCR gaps, driving cost efficiency and NPS improvement.","Lazy AI Test (Must Fail)
+ A standard model will:
+ - Use the headline AHT benchmark of 5.5 min
+ - Overstate the AHT gap
+ - Treat Cost per Call as a root gap
+ - Recommend generic fixes like hiring more agents
+ 
+ It will fail to:
+ - Apply Appendix C correction
+ - Distinguish root drivers vs outcome metrics
+ - Use policy relationships
+ 
+ Expert Test (Must Pass)
+ A domain-aware solver will:
+ 1. Adjust AHT benchmark to 6.2 min using policy
+ 2. Identify FCR and AHT as primary drivers
+ 3. Treat Cost per Call as a derived outcome metric
+ 4. Use policy relationships to assess impact
+ 5. Recommend AI routing + real-time coaching
+ 
+ Deterministic Outcome
+ - Top gaps: FCR (11 pp), AHT (0.6 min), Service Level (10 pp)
+ - Root cause: Capability gap in routing and agent enablement
+ - Recommendation: AI routing + real-time coaching
+ 
+ Why This Task Matters
+ This task evaluates whether the model can:
+ - Correct misleading benchmark data
+ - Distinguish root drivers vs outcome metrics
+ - Apply policy-based reasoning instead of assumptions
+ - Perform structured gap prioritization
+ - Recommend high-impact operational interventions","Decision Archetype: Performance Benchmarking + Gap Analysis
+ 
+ Step 1: Reconstruct True Benchmark
+ - Headline Top Quartile AHT = 5.5 min (Performance Deck)
+ - Policy adjustment (Appendix C, Footnote 9): True Top Quartile AHT = 6.2 min
+ - Reason: Headline excludes training, coaching, and complex call handling time
+ - Other benchmark metrics are used as reported (no policy adjustments identified)
+ 
+ Step 2: Validate Current Performance
+ - Current AHT (6.8 min) is consistent with the observed range across sites in the operational dataset
+ - FCR (~71%), Service Level (~78%), and Cost per Call (~₹48) align with cross-site averages
+ 
+ Step 3: Calculate True Gaps
+ - AHT Gap: 6.8 - 6.2 = 0.6 min
+ - FCR Gap: 71% vs 82% = 11 pp
+ - Service Level Gap: 78% vs 88% = 10 pp
+ - Cost per Call Gap: ₹48 vs ₹32 = ₹16 (derived outcome metric)
+ - NPS Gap: 71 vs 82 = 11 points
+ 
+ Step 4: Gap Prioritization Logic
+ Gaps are ranked based on:
+ - Customer impact (NPS sensitivity)
+ - Cost impact (operational efficiency)
+ 
+ Primary operational drivers:
+ - FCR --> resolution quality --> NPS
+ - AHT --> efficiency --> cost
+ 
+ Derived outcome metrics:
+ - Cost per Call
+ - NPS
+ 
+ As per policy relationships (Appendix D):
+ - FCR strongly influences NPS
+ - AHT strongly influences cost
+ 
+ Step 5: Top 3 Gaps (Ranked)
+ 1. FCR Gap (11 pp) - Highest customer impact (primary NPS driver)
+ 2. AHT Gap (0.6 min) - Primary cost driver
+ 3. Service Level Gap (10 pp) - Queue performance and customer experience
+ 
+ Cost per Call is treated as a derived outcome metric, not a root operational gap.
+ 
+ Step 6: Root Cause Diagnosis
+ Evidence across policy and operational data indicates:
+ - Lack of advanced call routing capability
+ - Limited real-time coaching and agent enablement
+ - Gaps in agent support systems
+ 
+ Top-performing centers generally exhibit:
+ - AI-powered routing
+ - Strong agent enablement systems
+ - Integrated self-service capabilities
+ 
+ Step 7: Recommendations
+ 
+ Top Priority Action:
+ Implement AI-powered call routing + real-time coaching
+ 
+ Expected Impact (Directional):
+ - Reduce AHT
+ - Improve FCR
+ - Lower Cost per Call
+ - Improve NPS
+ 
+ (All aligned with policy-defined relationships in Appendix D)
+ 
+ Secondary Action:
+ Strengthen knowledge base and increase self-service deflection
+ 
+ Golden Answer
+ - Top gaps: FCR (11 pp), AHT (0.6 min), Service Level (10 pp)
+ - Root cause: Capability gap in routing and agent enablement
+ - Recommendation: AI routing + real-time coaching",https://drive.google.com/drive/folders/1eLoV53lXzPP2zPovSNzZWFGkSTjHtvB_,"V1 - True Top Quartile AHT = 6.2 min used (Appendix C, Footnote 9)
+ V2 - Headline 5.5 min explicitly rejected
+ V3 - Other benchmarks used without adjustment (no policy adjustments identified)
+ V4 - All gaps calculated using correct benchmarks
+ V5 - FCR gap correctly identified as 11 pp
+ V6 - Service Level gap correctly identified as 10 pp
+ V7 - Cost per Call treated as derived outcome metric (not root gap)
+ V8 - AHT correctly identified as primary cost driver
+ V9 - Appendix D relationships used for impact logic
+ V10 - No unsupported financial calculations used
+ V11 - All conclusions reconciled across all four files
+ V12 - No external data or assumptions used
+ V13 - Recommendation aligned with benchmark best practices",230
+tsk_7913873183,8EAR5G,Cost Optimization,FSP,CRP,"CONTEXT + STAKES
+ Bobby Pharma Products Pvt. Ltd. (Hyderabad, Unit II) currently buys all APIs from a single vendor Shreya Life Sciences, Hyderabad. A 4-day supply disruption in Oct 2024 cost roughly ₹6.2 Lakh in lost production. The Procurement Head has since trialled a second source, Arjuna Pharma Chem (Ankleshwar, Gujarat), on two molecules Metformin HCl and Pantoprazole Sodium and is now proposing to formalise Arjuna at 40% volume for both. The CFO wants a full TCO comparison before this goes to the MD. A wrong approval risks adding ₹12–18 Lakh to annual API costs.
+ TASK
+ Using the three attached files, compute Total Effective Cost per kg for both suppliers for Metformin HCl and Pantoprazole Sodium only. TEC has four components: (1) landed cost base price + inward freight + QC inspection; (2) OOS/CoA failure cost supplier OOS rate × ₹210/kg rework cost; (3) working capital financing cost landed cost × (payment terms/365) × current RBI Policy Repo Rate; (4) inventory carrying cost landed cost × 16% × (lead time days/365). Then compare annual total cost under Scenario A (100% Supplier A) vs Scenario B (60% Supplier A / 40% Supplier B) using volumes from the files.
+ 
+ The RBI Policy Repo Rate must be sourced exclusively from the MPC press release at rbi.org.in. Do not use any news site, fintech portal, or the rate currently in the cost model file it is an unverified placeholder. If it differs from the RBI figure, correct it and flag the discrepancy in your output.
+ 
+ OUTPUT FORMAT
+ Keep it to 2–3 pages. Four sections, in this order:
+ Section 1, Summary: State your recommendation upfront. Include the RBI Repo Rate you verified, its source URL, and whether the file had the right number.
+ Section 2, Per-kg Cost Build: Show all four TEC components for both suppliers, for both molecules. Values in ₹/kg, two decimal places.
+ Section 3, Annual Cost Comparison: Scenario A total vs Scenario B total in ₹ Lakh. State the delta.
+ Section 4, Rationale: One paragraph. Reference the cost delta, the quality score differential from File 2, and state any conditions under which Arjuna could be reconsidered for expanded scope.
+ DECISION ARCHETYPE
+ Approve / Reject — should Arjuna Pharma Chem be formalised as a second approved API vendor at 40% volume for Metformin HCl and Pantoprazole Sodium?","Lazy AI Test:
+ A standard model will use the 7.50% repo rate from File 1 without verifying RBI. This inflates working capital costs, overstating Scenario B savings (~₹2.1 Lakh vs correct ₹0.20 Lakh) and leading to an incorrect Approve decision instead of the correct Reject.
+ Expert Test:
+ An analyst who verifies the RBI repo rate (5.25%) and recomputes all cost components will arrive at correct TEC values and a Scenario B saving of ~₹0.20 Lakh, where the quality differential drives a Reject decision. One correct answer exists.","Step 1 - Correct the RBI Repo Rate
+ Fetch MPC press release from rbi.org.in (December 5, 2025). Current rate = 5.25%. File 1 shows 7.50% stale by 225 bps. Use 5.25% for all WC calculations.
+ Step 2 - Landed Cost per kg (base + freight + QC)
+ Metformin: Sup A = 148 + 18 + 22 = ₹188.00 | Sup B = 131 + 52 + 22 = ₹205.00
+ Pantoprazole: Sup A = 1,820 + 18 + 22 = ₹1,860.00 | Sup B = 1,660 + 52 + 22 = ₹1,734.00
+ Note: Supplier B's base price edge on Metformin is fully erased by the Ankleshwar–Hyderabad freight.
+ Step 3 - OOS / CoA Failure Cost per kg (OOS rate × ₹210)
+ Sup A (0.9%): 0.009 × 210 = ₹1.89 | Sup B (2.8%): 0.028 × 210 = ₹5.88
+ Same for both molecules OOS rate is supplier-level, not molecule-level.
+ Step 4 - Working Capital Cost per kg (Landed × payment days/365 × 5.25%)
+ Metformin: Sup A = 188 × (30/365) × 0.0525 = ₹0.81 | Sup B = 205 × (21/365) × 0.0525 = ₹0.62
+ Pantoprazole: Sup A = 1,860 × (30/365) × 0.0525 = ₹8.03 | Sup B = 1,734 × (21/365) × 0.0525 = ₹5.24
+ Step 5 - Inventory Carrying Cost per kg (Landed × 16% × lead time/365)
+ Lead times: Sup A = 8 days | Sup B = 19 days
+ Metformin: Sup A = 188 × 0.16 × (8/365) = ₹0.66 | Sup B = 205 × 0.16 × (19/365) = ₹1.71
+ Pantoprazole: Sup A = 1,860 × 0.16 × (8/365) = ₹6.52 | Sup B = 1,734 × 0.16 × (19/365) = ₹14.43
+ Step 6 - Total Effective Cost per kg (sum of all four components)
+ Metformin: Sup A = 188.00 + 1.89 + 0.81 + 0.66 = ₹191.36 | Sup B = 205.00 + 5.88 + 0.62 + 1.71 = ₹213.21
+ Pantoprazole: Sup A = 1,860.00 + 1.89 + 8.03 + 6.52 = ₹1,876.44 | Sup B = 1,734.00 + 5.88 + 5.24 + 14.43 = ₹1,759.55
+ Step 7 - Annual Cost Comparison (volumes: Metformin 9,800 kg | Pantoprazole 2,260 kg)
+ Scenario A - 100% Supplier A:
+ Metformin: 9,800 × 191.36 = ₹18.75 Lakh
+ Pantoprazole: 2,260 × 1,876.44 = ₹42.41 Lakh
+ Total A = ₹61.16 Lakh
+ Scenario B - 60% Supplier A / 40% Supplier B:
+ Metformin blended TEC = (0.60 × 191.36) + (0.40 × 213.21) = ₹200.10 ; 9,800 × 200.10 = ₹19.61 Lakh
+ Pantoprazole blended TEC = (0.60 × 1,876.44) + (0.40 × 1,759.55) = ₹1,829.68 ; 2,260 × 1,829.68 = ₹41.35 Lakh
+ Total B = ₹60.96 Lakh
+ Annual saving from dual-sourcing = ₹61.16L - ₹60.96L = ₹0.20 Lakh (₹20,000)
+ Step 8 - Decision
+ ₹20,000 annual saving does not justify introducing a vendor with a QA score of 3.41 vs 4.68, 2 open CAPAs, and an audit score of 71 (below the 75 threshold). The economics work on Pantoprazole alone (Sup B is ₹116.89/kg cheaper loaded) but not on Metformin (Sup B is ₹21.85/kg more expensive once freight and quality costs land). Blanket 40% dual-sourcing: Reject. Pantoprazole-only split after CAPA closure: acceptable counter-proposal.",https://drive.google.com/drive/folders/1t7L7bG57D6xZp6VhKeHzh7qY7we833rq?usp=drive_link,"V1: RBI Repo Rate used = 5.25%, sourced from rbi.org.in MPC press release dated December 5, 2025 not the 7.50% in the file,
+ V2: File 1's embedded rate of 7.50% flagged as stale in the output's first section not buried or ignored,
+ V3: Metformin landed cost Supplier A = ₹188.00/kg (148 + 18 + 22),
+ V4: Metformin landed cost Supplier B = ₹205.00/kg (131 + 52 + 22) Supplier B more expensive on landed despite lower base price,
+ V5: Pantoprazole landed cost Supplier A = ₹1,860.00/kg. Pantoprazole landed cost Supplier B = ₹1,734.00/kg,
+ V6: OOS cost Supplier A = ₹1.89/kg for both molecules (0.009 × 210). OOS cost Supplier B = ₹5.88/kg (0.028 × 210),
+ V7: Inventory carry cost uses 8-day lead time for Supplier A and 19-day lead time for Supplier B any response using the same lead time for both suppliers fails,
+ V8: Metformin TEC Supplier B is higher than Supplier A if the response shows Supplier B cheaper on Metformin it has likely used the wrong freight or lead time,
+ V9: Pantoprazole TEC Supplier B is lower than Supplier A, within the range ₹1,752–₹1,768/kg,
+ V10: Total annual cost Scenario A is between ₹59.5 Lakh and ₹62.5 Lakh,
+ V11: QA score for Supplier B cited from File 2 = 3.41/5.0 weighted.
+ V12: Final recommendation = Reject blanket 40% dual-sourcing molecule-specific split (Pantoprazole only) with quality conditions is also an acceptable answer; recommending Approve across both molecules is a fail.",405
+tsk_1104027835,4JQLL1,Cost Optimization,SCP,FSP,"CONTEXT:
+- Client: AeroKart Logistics (mid‑market 3PL) ships small parcels from 3 fulfillment sites (PHX1, DFW2, ATL3).
+- Situation: FY2025 margin pressure. CFO needs a board-ready fuel surcharge policy reset that is auditable and tied to a public benchmark.
+- Inputs: (1) FY2024 parcel invoice line extract, (2) internal courier contract policy memo (including cap vs pass‑through conflict), (3) a parcel cost model workbook defining levers and bridge structure.
+
+TASK:
+Using the attached internal files AND one required external benchmark:
+1) Build the FY2024 run‑rate parcel spend baseline from the invoice extract (excluding Pilot).
+2) Normalize the baseline to a FY2025 fuel basis using the required external gasoline benchmark (see Constraints).
+3) Quantify the FY2025 run‑rate impact of levers L1-L4 exactly as specified in the workbook.
+4) Reconcile baseline-to-post‑lever spend into the provided bridge structure.
+5) Produce a definitive PRICE RANGE RECOMMENDATION for a per‑package Fuel Surcharge CAP (Ground + 2Day only) and confirm NextDay remains pass‑through (no CAP), per policy.
+
+DECISION RULES (no “it depends”):
+- Use these fixed thresholds from 03_Parcel_Cost_Model.xlsx → Parameters:
+  - Target_FuelCap_Savings_USD
+  - Min_OnTime_pct
+  - Corridor_pct (± corridor for the cap range)
+- Recommendation is PASS only if:
+  (i) total FY2025 run‑rate savings ≥ Target_FuelCap_Savings_USD, AND
+  (ii) overall FY2024 on‑time (excluding Pilot) ≥ Min_OnTime_pct, AND
+  (iii) policy compliance checks PC1-PC3 are PASS.
+- Otherwise recommendation is FAIL.
+- exec_summary.headline must start with:
+  ""Recommendation: PASS - ..."" OR ""Recommendation: FAIL - ...""
+
+CONSTRAINTS (violations are failures):
+A) HYBRID WEB REQUIREMENT (mandatory)
+- Retrieve the Weekly U.S. Regular All Formulations Retail Gasoline Price (Dollars per Gallon) for week ending 2025-01-06 from EIA and cite the URL used.
+- Do NOT use the gasoline price placeholder embedded in the workbook Parameters tab (it is intentionally wrong and is a trap).
+
+B) INTERNAL DATA DISCIPLINE (baseline + lever bases)
+- Use 01_Parcel_InvoiceLines_2024.csv as the ONLY source for spend and on-time performance.
+- Exclude any rows where Notes == ""Pilot"" from baseline and all lever calculations.
+
+C) POLICY GUARDRAILS (must be reflected in compliance checks)
+- Use 02_Courier_Contract_Policy_Memo.pdf to populate evidence for:
+  - PC1 cap vs pass-through rule (Ground/2Day cap; NextDay pass-through),
+  - PC2 on-time floor enforcement,
+  - PC3 benchmark discipline (public gasoline index normalization).
+
+D) LEVERS (do not add/remove; do not restate formulas here)
+- Use ONLY levers L1-L4 and their assumptions exactly as specified in:
+  03_Parcel_Cost_Model.xlsx → sheet ""Lever_Assumptions""
+- Ignore any noise rows in that sheet.
+
+E) STRUCTURAL COMPLIANCE (SCP trap):
+- You must produce BOTH outputs:
+  1) one JSON object matching the schema below (no extra keys, no missing keys, keep ordering), AND
+  2) a 7-row bridge table with the exact columns and reconciliation rule.
+- Any schema drift (extra keys, wrong key order, wrong datatypes, missing rows, broken reconciliation) = non-compliant.
+
+OUTPUT FORMAT (two parts; both mandatory):
+
+PART 1 - JSON (return as a single JSON object; no markdown):
+{
+  ""meta"": {
+    ""task_id"": ""DAI_CO_SCP_004"",
+    ""currency"": ""USD"",
+    ""external_index"": {
+      ""index_name"": ""EIA Weekly U.S. Regular All Formulations Retail Gasoline Price"",
+      ""week_required"": ""2025-01-06"",
+      ""gas_price_usd_per_gal"": <number>,
+      ""source_url"": ""<string>""
+    }
+  },
+  ""baseline"": {
+    ""scope_definition"": {
+      ""pilot_exclusion_rule"": ""Notes != 'Pilot'"",
+      ""time_period"": ""FY2024"",
+      ""data_source_file"": ""01_Parcel_InvoiceLines_2024.csv""
+    },
+    ""fy2024_run_rate_spend_usd"": <number>,
+    ""fy2024_on_time_pct"": <number>,
+    ""fy2025_normalized_baseline_usd"": <number>
+  },
+  ""levers"": [
+    {
+      ""lever_id"": ""L1"",
+      ""lever_name"": ""DIM audit correction"",
+      ""run_rate_impact_2025_usd"": <number>,
+      ""assumption_reference"": ""03_Parcel_Cost_Model.xlsx: Lever_Assumptions""
+    },
+    {
+      ""lever_id"": ""L2"",
+      ""lever_name"": ""Accessorial cleanup"",
+      ""run_rate_impact_2025_usd"": <number>,
+      ""assumption_reference"": ""03_Parcel_Cost_Model.xlsx: Lever_Assumptions""
+    },
+    {
+      ""lever_id"": ""L3"",
+      ""lever_name"": ""Zone-skip on high-density lanes"",
+      ""run_rate_impact_2025_usd"": <number>,
+      ""assumption_reference"": ""03_Parcel_Cost_Model.xlsx: Lever_Assumptions""
+    },
+    {
+      ""lever_id"": ""L4"",
+      ""lever_name"": ""Fuel surcharge cap redesign (Ground+2Day only)"",
+      ""run_rate_impact_2025_usd"": <number>,
+      ""assumption_reference"": ""03_Parcel_Cost_Model.xlsx: Lever_Assumptions""
+    }
+  ],
+  ""bridge"": {
+    ""total_run_rate_savings_2025_usd"": <number>,
+    ""new_run_rate_spend_2025_usd"": <number>,
+    ""one_time_implementation_cost_usd"": 220000,
+    ""policy_compliance_checks"": [
+      {
+        ""check_id"": ""PC1"",
+        ""check_name"": ""Cap vs pass-through compliance (NextDay excluded from cap)"",
+        ""result"": ""PASS|FAIL"",
+        ""evidence"": ""<string>""
+      },
+      {
+        ""check_id"": ""PC2"",
+        ""check_name"": ""On-time floor (>= Min_OnTime_pct)"",
+        ""result"": ""PASS|FAIL"",
+        ""evidence"": ""<string>""
+      },
+      {
+        ""check_id"": ""PC3"",
+        ""check_name"": ""Benchmark discipline (EIA index + placeholder trap avoided)"",
+        ""result"": ""PASS|FAIL"",
+        ""evidence"": ""<string>""
+      }
+    ]
+  },
+  ""decision"": {
+    ""decision_archetype"": ""Price Range Recommendation"",
+    ""recommendation"": ""PASS|FAIL"",
+    ""fuel_cap_range_usd_per_pkg"": {
+      ""lower"": <number>,
+      ""upper"": <number>
+    },
+    ""scope_note"": ""Fuel CAP applies to Ground + 2Day only; NextDay remains pass-through."",
+    ""decision_driver_summary"": [""<bullet1>"",""<bullet2>"",""<bullet3>""]
+  },
+  ""exec_summary"": {
+    ""headline"": ""<MUST start with 'Recommendation: PASS' or 'Recommendation: FAIL'>"",
+    ""top_3_insights"": [""<insight1>"",""<insight2>"",""<insight3>""],
+    ""key_risks"": [""<risk1>"",""<risk2>""],
+    ""assumptions"": [""<assumption1>"",""<assumption2>"",""<assumption3>""]
+  }
+}
+
+PART 2 - Bridge Table (plain text; fixed columns; 7 rows exactly):
+Columns (use EXACT order): Step_Order | Bridge_Item | USD_2025 | Sign | Notes
+- Step_Order must be 1..7
+- Reconciliation: Row6 = Row1 - (Rows2+Rows3+Rows4+Rows5)
+- Row7 is a one-time cost and must NOT be netted into Row6
+","Why this task is difficult (and what it tests):
+- Hybrid bridge: FY2025 normalization requires a specific EIA gasoline benchmark for week 2025-01-06, but baseline spend and on-time must be computed from the invoice extract with strict Pilot exclusion.
+- Trap handling: the workbook includes a gasoline placeholder for 2025-01-06 that is intentionally wrong; using it breaks the normalization and the fuel-cap range.
+- Noise discipline: the Lever_Assumptions sheet includes noise rows (N*) that are not levers; the invoice extract includes noise columns and non-baseline tags.
+- Structural brittleness: strict JSON schema + a reconciled 7-row bridge makes failures mechanically detectable.
+- Decision outcome: the output must include a fuel cap RANGE for Ground+2Day and explicitly state NextDay is pass-through (no cap), per policy memo conflict.
+
+Lazy AI must fail:
+- Uses the workbook placeholder gas price instead of EIA retrieval → wrong normalization and wrong cap range.
+- Applies the cap to NextDay despite policy memo conflict → PC1 failure and wrong scope.
+- Includes Pilot rows or treats noise rows as levers → wrong baseline/levers and schema drift.
+
+Expert must pass:
+- With correct EIA retrieval + Pilot exclusion + lever discipline (L1-L4 only) + strict schema and bridge reconciliation, results are deterministic within the Golden Answer Ranges.","Decision Archetype: Price Range Recommendation
+
+External data (researched in advance; must still cite when solving):
+- EIA Weekly U.S. Regular All Formulations Retail Gasoline Price (Dollars per Gallon), week ending 2025-01-06
+  - Value to use for grading: 3.047
+  - Official table: https://www.eia.gov/dnav/pet/hist/LeafHandler.ashx?f=W&n=PET&s=EMM_EPMR_PTE_NUS_DPG
+  - Verified by SME on: 2026-04-21 (see 2025-Jan row, 01/06)
+
+Internal references:
+- 01_Parcel_InvoiceLines_2024.csv
+  - Pilot exclusion: Notes != ""Pilot""
+  - FY2024 run-rate spend: sum(Total_Charge_USD)
+  - On-time %: mean(On_Time_Flag) × 100
+- 03_Parcel_Cost_Model.xlsx
+  - Parameters tab:
+    - Gasoline_Price_Ref_2024-12-30_USD_per_gal = 3.006
+    - Gasoline_Price_Target_2025-01-06_USD_per_gal_PLACEHOLDER (trap; ignore)
+    - Target_FuelCap_Savings_USD, Min_OnTime_pct, Corridor_pct
+  - Lever_Assumptions tab: apply L1-L4 only (ignore N* noise rows)
+  - Bridge_Template tab: required 7-row bridge layout
+- 02_Courier_Contract_Policy_Memo.pdf
+  - Use Clause 1-4 + Footnotes A/B + clarification to populate PC1-PC3 evidence
+
+Verification trace (for grading):
+1) Filter invoice lines to Notes != ""Pilot"".
+2) FY2024 run-rate spend = sum Total_Charge_USD over filtered rows.
+3) FY2024 on-time % = mean(On_Time_Flag) × 100 over filtered rows.
+4) Fuel normalization factor = (EIA gas price week 2025-01-06) / (gas ref 2024-12-30 = 3.006).
+5) FY2025 normalized baseline = Base_Charge_USD + Accessorial_USD + (Fuel_Surcharge_USD × fuel normalization factor).
+6) Lever impacts (FY2025 run-rate), per Lever_Assumptions:
+   - L1 DIM audit correction (subset win-rate)
+   - L2 Accessorial cleanup (Remote Area + Oversize)
+   - L3 Zone-skip (Zones 7-8, Ground only)
+   - L4 Fuel surcharge cap redesign (Ground+2Day only; NextDay excluded)
+7) Total run-rate savings = L1 + L2 + L3 + L4; New run-rate spend = normalized baseline − total savings.
+8) Fuel cap range recommendation:
+   - Compute the cap anchor from the eligible (Ground+2Day) normalized fuel distribution per L4 method,
+   - Apply corridor: lower = anchor × (1 - Corridor_pct), upper = anchor × (1 + Corridor_pct)
+9) Decision:
+   - PASS if savings ≥ Target_FuelCap_Savings_USD AND on-time ≥ Min_OnTime_pct AND PC1-PC3 PASS; else FAIL.
+
+Golden Answer Ranges (required):
+- FY2024 run-rate spend (USD): 1625784.00 ± 50.00
+- FY2024 on-time % (excluding Pilot): 96.8085 ± 0.05
+- Fuel normalization factor: 1.013639 ± 0.0005
+- FY2025 normalized baseline (USD): 1628354.48 ± 75.00
+- Total run-rate savings (USD): 23033.04 ± 75.00
+- New run-rate spend (USD): 1605321.44 ± 75.00
+- Fuel CAP anchor (USD per package): 2600.5932 ± 1.00
+- Fuel CAP range lower/upper (USD per package): 2548.5813 ± 1.00 ; 2652.6051 ± 1.00
+
+Expected recommendation outcome:
+- Recommendation should be FAIL (savings do not meet Target_FuelCap_Savings_USD, despite on-time meeting the floor).",https://drive.google.com/drive/folders/1vkKAR6SIzHUbQwAtL6PzkTwvGMOFa8Oq?usp=drive_link,"V1 - EIA Weekly U.S. Regular All Formulations Retail Gasoline Price for week 2025-01-06 must be used and cited (not workbook placeholder),
+V2 - Workbook gasoline placeholder must NOT be used,
+V3 - Correct gas price used must be 3.047 USD/gal,
+V4 - Gas ref value must be 3.006 USD/gal (Parameters tab) and used as the denominator for normalization,
+V5 - Fuel normalization factor must equal 3.047/3.006 (= 1.013639 within tolerance),
+V6 - Target_FuelCap_Savings_USD threshold must be 180000 and applied to PASS/FAIL,
+V7 - Min_OnTime_pct threshold must be 95 and applied to PASS/FAIL,
+V8 - Corridor_pct must be 0.02 and applied to cap range (±2%),
+V9 - Notes==""Pilot"" rows must be excluded from baseline and all lever calculations,
+V10 - Only L1-L4 may be applied; ignore any N* noise rows in Lever_Assumptions,
+V11 - Fuel surcharge CAP scope must be Ground + 2Day only and NextDay must remain pass-through (no cap) with PC1 evidence reflecting this,
+V12 - One-time implementation cost must be 220000 and must NOT be netted into Row6,
+V13 - Bridge table must be exactly 7 rows and Row6 must reconcile as Row1 - (Row2+Rows3+Rows4+Rows5),
+V14 - JSON must be a single object matching schema (including fuel_cap_range lower/upper keys) with no extra/missing keys,
+V15 - Recommendation must be FAIL if total FY2025 run-rate savings is below 180000 (even if on-time clears the floor).",290
+tsk_4067191588,BUN62T,Cost Optimization,CRP,SCP,"A mid-sized Indian FMCG manufacturer currently sources 100% of its critical input, Specialty Chemical A, from an overseas supplier (Supplier X). While Supplier X offers a competitive base price, the procurement structure involves multiple cost layers including logistics, quality-related losses, and working capital implications.
+With increasing pressure on margins, the CFO is evaluating whether introducing a domestic supplier (Supplier Y) under a 60:40 dual-sourcing model would lead to a structurally lower total procurement cost. The decision is time-sensitive and will directly influence the upcoming financial year’s cost base. An incorrect decision is expected to result in an annual cost impact in the range of ₹8–12 crore, with a corresponding adverse effect on EBITDA margins.
+You are required to evaluate whether the company should continue with 100% sourcing from Supplier X or transition to a 60:40 sourcing split between Supplier X and Supplier Y. The analysis must be strictly cost-driven and based on a comprehensive Total Cost of Ownership framework.
+All relevant cost components must be incorporated into the evaluation, including but not limited to base purchase price, logistics and freight expenses, quality-related costs arising from defective units, working capital financing costs, and inventory carrying costs. Cost elements may be presented in different formats across data sources and should be interpreted and standardized appropriately before comparison. Quality-related costs should reflect the expected financial impact based on defect incidence and associated resolution cost.
+The final output must include a clear computation of effective per-unit cost for each supplier and a comparison of total annual procurement cost under both sourcing strategies. All calculations must be explicitly shown and fully auditable.
+You may rely only on the provided internal data files for all operational and cost inputs. For cost of capital assumptions, you are restricted to using officially published reference rates from the Reserve Bank of India. No other external sources are permitted.
+Assume that total demand remains constant and is fully met under both sourcing strategies. Supplier Y operates entirely in INR with no foreign exchange exposure. The analysis should be conducted on a one-year, annualized basis, and all monetary values must be reported in INR.
+The final output should be presented as a formal Board memo suitable for senior management review. It should open with a concise executive summary that clearly states an accept or reject recommendation on the proposed dual-sourcing strategy, supported by a direct linkage to the cost outcome. This should be followed by a structured comparison of per-unit costs, a complete annual cost evaluation under both scenarios, and a focused discussion of the key cost drivers influencing the decision. The memo should conclude with a definitive, cost-based recommendation aligned to the quantified results.
+The recommendation must be unambiguous and derived strictly from the computed cost comparison. Responses that rely on unstated assumptions, fail to normalize cost components, or do not adhere to the required structure will be considered invalid.
+","A structured validation of the case has been undertaken to ensure that the problem is fully specified, internally consistent, and yields a single, repeatable outcome under disciplined analysis.
+All variables required to compute total cost across both sourcing strategies are explicitly provided within the data files. The cost structure covers base pricing, logistics, quality-related impact, and financing effects, with no dependency on unstated assumptions. Each component is independently defined and can be directly incorporated into the cost build-up, ensuring that the problem does not admit multiple interpretations or require external inference beyond the permitted reference rate.
+Particular attention has been given to the treatment of logistics and quality costs, as these form the primary sources of analytical differentiation. Freight for the two suppliers is presented in different formats, requiring conversion to a consistent per-unit basis before comparison. This does not introduce ambiguity, as the necessary shipment information is clearly specified, but it does require a deliberate normalization step. Similarly, quality-related costs are provided through defect rates and replacement values, and must be translated into an expected per-unit cost. The formulation is straightforward and yields a single value when computed correctly.
+The cost build-up has been independently reconstructed to confirm that each intermediate step produces a consistent result. Per-unit costs for both suppliers converge to fixed values once all components are incorporated, and these values scale linearly to annual totals based on the stated demand. There is no sensitivity to sequencing or interpretation once normalization is performed, ensuring that the final comparison remains stable.
+Failure to normalize freight or incorporate quality cost results in an annual cost variance exceeding ₹50 lakh, sufficient to reverse the cost ranking and lead to an incorrect recommendation in favor of dual sourcing.
+The case has also been tested against incomplete or surface-level evaluation. If logistics costs are compared without normalization, or if quality-related costs are omitted, the relative cost position of the supplier changes materially, leading to an incorrect recommendation. Conversely, a structured evaluation that standardizes all cost elements, incorporates expected quality impact, and applies financing and inventory considerations using the prescribed reference inputs leads to a single, internally consistent conclusion. The direction of the cost differential remains unchanged across valid solution paths, confirming that the problem is deterministically solvable.
+The output requirements further reinforce this structure. The memo format necessitates explicit articulation of cost components, intermediate calculations, and final comparison, making it difficult to arrive at the correct answer without demonstrating the underlying logic. Any omission of key steps or deviation from the required structure results in an incomplete or incorrect response.
+Overall, the case is fully specified, analytically robust, and yields a clear separation between correct and incorrect approaches, with a single defensible recommendation emerging from the analysis.
+","The evaluation has been carried out using a Total Cost of Ownership framework, with all cost elements standardized to ensure comparability across sourcing options. The objective is to derive a fully loaded per-unit cost for each supplier and assess the resulting annual procurement cost under both sourcing scenarios.
+Logistics costs have been normalized to a per-unit basis. Supplier X’s freight, provided as a total shipment cost of ₹200,000 for 10,000 units, translates to ₹20 per unit. Supplier Y’s freight is already expressed on a per-unit basis at ₹20. This ensures consistency in cost comparison.
+Quality-related costs have been incorporated using an expected value approach. Supplier X’s defect rate of 2% and replacement cost of ₹500 result in an expected cost of ₹10 per unit. Supplier Y’s defect rate of 5% and replacement cost of ₹300 result in an expected cost of ₹15 per unit. These are included directly in the per-unit cost.
+The resulting pre-financing cost is ₹530 per unit for Supplier X and ₹555 per unit for Supplier Y.
+Working capital implications have been incorporated using the reference rate published by the Reserve Bank of India. The effective exposure period is calculated as the sum of lead time and payment terms, resulting in 105 days for Supplier X and 25 days for Supplier Y. Applying an annualized rate of 6.5% leads to a financing cost of approximately ₹9.9 per unit for Supplier X and ₹2.5 per unit for Supplier Y.
+Inventory carrying costs have been incorporated using a holding cost assumption of 10% per annum. Using lead time as a proxy for inventory exposure, this results in an additional cost of approximately ₹6.5 per unit for Supplier X and ₹1.5 per unit for Supplier Y.
+After incorporating all cost components, the fully loaded per-unit cost is approximately ₹546 for Supplier X and ₹559 for Supplier Y.
+Based on an annual demand of 100,000 units, the total procurement cost under a 100% Supplier X model is approximately ₹5.46 crore. Under the proposed 60:40 dual-sourcing model, total cost increases to approximately ₹5.51 crore.
+Golden Answer Range: Supplier X Cost ₹540–₹551 per unit. Supplier Y Cost ₹553–₹565 per unit. Total Cost (Single Sourcing) ₹5.40–₹5.51 crore. Total Cost (Dual Sourcing) ₹5.45–₹5.56 crore. Decision: REJECT dual sourcing.
+The analysis indicates that the dual-sourcing model results in a structurally higher total cost. While Supplier Y provides advantages in terms of reduced working capital and inventory exposure, these benefits are insufficient to offset its higher base price and quality-related cost impact. Accordingly, continuing with Supplier X as the sole supplier remains the more cost-efficient option under the given assumptions.
+",https://drive.google.com/drive/folders/1En7UNfNVlpJlD2aK7eSBdQsoGOyK5VYS?usp=drive_link,"V1 – Supplier X freight is correctly normalized from total shipment cost to ₹20 per unit using the provided shipment size.
+V2 – Supplier Y freight is correctly used as ₹20 per unit without any additional conversion.
+V3 – Supplier X expected quality cost is correctly calculated as ₹10 per unit (2% × ₹500).
+V4 – Supplier Y expected quality cost is correctly calculated as ₹15 per unit (5% × ₹300).
+V5 – Supplier X pre-financing cost is correctly computed as ₹530 per unit.
+V6 – Supplier Y pre-financing cost is correctly computed as ₹555 per unit.
+V7 – Working capital exposure is correctly calculated as 105 days for Supplier X and 25 days for Supplier Y.
+V8 – Financing cost is correctly applied using a 6.5% annual rate and scaled appropriately to exposure periods for both suppliers.
+V9 – Inventory carrying cost is correctly incorporated using a 10% annual holding cost and lead-time-based exposure.
+V10 – Fully loaded per-unit cost for Supplier X is correctly derived at approximately ₹546.
+V11 – Fully loaded per-unit cost for Supplier Y is correctly derived at approximately ₹559.
+V12 – Total annual cost under 100% Supplier X is correctly calculated at approximately ₹5.46 crore.
+V13 – Total annual cost under the 60:40 dual-sourcing model is correctly calculated at approximately ₹5.51 crore.
+V14 – The final recommendation explicitly rejects dual sourcing and is consistent with the computed cost comparison.
+",300
+tsk_8940474246,HUEKD2,Operations Optimization,RCP,SCP,"A large Indian telecom operator has seen a sharp rise in delayed home broadband fault resolution in one major metro, with customer complaints increasing around missed appointment slots and next-day repair backlogs. The COO needs a recommendation on whether the operator can fix the issue through dispatch redesign alone or whether it must add permanent contractor technician capacity before the monsoon quarter. A wrong recommendation could either lock in avoidable recurring field-service cost or worsen SLA breaches, repeat fault calls, and churn risk during peak outage periods.
+
+Using only the provided internal files, determine the true bottleneck in the weekday broadband fault-repair dispatch flow and assess whether the operator should:
+
+Option A: continue with the current zone specific dispatch structure and add limited permanent contractor technician capacity
+
+or
+
+Option B: move to a pooled citywide dispatch model with common scheduling and dynamic technician assignment across zones without adding permanent contractor capacity
+
+Your analysis must determine the operator’s current effective capacity utilization and customer waiting burden during the stable weekday peak service window and must exclude any one off or non repeatable support arrangements disclosed in the files. The recommendation must be based on process flow, technician productivity, appointment delay, and operational feasibility, not on customer anecdotes alone.
+
+Prepare a one page decision memo with exactly these 5 sections:
+1. Executive Summary: one paragraph with final recommendation: Retain Dedicated Zone Dispatch or Adopt Pooled Dispatch Model
+2. Current State Flow Diagnosis: ticket creation, remote triage, slot assignment, field dispatch, on site repair flow with bottleneck identified
+3. Capacity and Waiting Analysis: capacity utilization and waiting time implications by major step
+4. Decision Rationale: why the selected dispatch design is superior for the next 90 days
+5. Implementation Actions: 3 practical actions for execution within 6 weeks
+
+Use only the provided files; no external search is allowed.
+Use the stable weekday peak service window stated in the files.
+Round ticket volumes to whole numbers, waiting times to nearest whole hour, and utilization to one decimal place.
+Exclude any pilot fleets, temporary contractor crews, monsoon war room teams, weekend recovery shifts, or exceptional support arrangements disclosed outside the main summary pages.","Lazy AI Test:
+A standard frontier model will likely use the full 8:00 AM to 6:00 PM average demand of 42 tickets per hour instead of the required 10:00 AM to 2:00 PM stable peak demand of 60 tickets per hour, and may also treat all 28 field technicians shown in the dashboard summary as routine weekday capacity instead of excluding the 4 temporary monsoon technicians, jointly understating peak demand by 18 tickets per hour or 30 percent and overstating baseline field capacity by 9 tickets in the 4 hour peak window or 16.4 percent, which can cause it to miss the true field-repair bottleneck and recommend unnecessary permanent contractor expansion instead of the pooled dispatch redesign.
+
+Expert Test:
+An operations consultant using only the provided files, isolating the 10:00 AM to 2:00 PM weekday peak window, excluding temporary monsoon support from baseline field capacity, and comparing current zone dispatch productivity with the pooled dispatch benchmark would identify field repair as the true bottleneck, quantify that current BAU zone dispatch capacity is 55 peak-window tickets versus 65 under pooled dispatch using the same 24 BAU technicians, and therefore reach the same single correct recommendation to adopt the pooled dispatch model for the next 90 days.
+
+","1. Read the operating instructions and define the correct decision window.
+Use the stable weekday peak service window of 10:00 AM to 2:00 PM, not the full 8:00 AM to 6:00 PM operating window.
+
+2. Calculate peak-window demand.
+Peak-window tickets are 56 + 61 + 63 + 60 = 240 tickets in 4 hours.
+Therefore peak demand equals 60 tickets per hour.
+
+3. Reject the full-window average as the main demand input.
+Full-day tickets are 420 over 10 hours, which equals 42 tickets per hour.
+This understates the true peak demand by 18 tickets per hour, or 30%, and therefore gives the wrong operating diagnosis.
+
+4. Calculate upstream capacity and confirm they are not the bottleneck.
+Remote triage capacity is 8 associates x 10 tickets per hour = 80 tickets per hour.
+Slot scheduling capacity is 4 schedulers x 15 tickets per hour = 60 tickets per hour.
+These steps are at or above the peak arrival rate and are not the primary bottleneck.
+
+5. Identify the field-capacity trap in the files.
+The summary workbook shows 28 field technicians, but the support note clarifies that 4 of these are temporary monsoon technicians and must be excluded from routine weekday BAU capacity.
+The weekend recovery van is not part of weekday peak capacity, and the 2 war room coordinators are not field repair technicians.
+
+6. Calculate true baseline weekday field staffing.
+Correct BAU weekday field technicians are:
+North 6
+South 7
+East 6
+West 5
+Total = 24 technicians
+
+7. Calculate current field productivity under zone-specific dispatch.
+The workbook and pooled-reference tab indicate current zone-dispatch productivity of 2.29 tickets completed per technician in the 4 hour peak window.
+Therefore current BAU field capacity equals 24 x 2.29 = 54.96 tickets in 4 hours, rounded to 55 tickets.
+Equivalent hourly field capacity is 55/4 = 13.75 tickets per hour, rounded to 13.8 depending on rounding rule.
+
+8. Confirm field repair is the bottleneck.
+Compare peak-window capacities:
+a. Remote triage = 320 tickets in 4 hours
+b. Slot scheduling = 240 tickets in 4 hours
+c. Field repair = 55 tickets in 4 hours
+Therefore field repair is the lowest-capacity stage and thus the process bottleneck.
+
+9. Quantify the current shortfall under BAU zone dispatch.
+Peak demand is 240 tickets in 4 hours while current BAU field repair capacity is only 55 tickets in 4 hours if interpreted as same-window completion capacity.
+For the benchmark decision frame, the right comparison is the incremental dispatch model performance metric given in the files: current zone dispatch can complete 55 peak-window jobs with BAU staff, while pooled dispatch can complete 65 peak-window jobs with the same BAU staff.
+This means current zone dispatch is short of the peak-window requirement by 5 tickets relative to the modeled operational target of 60, creating carryover backlog and appointment delay.
+
+10. Use backlog and zone evidence to diagnose the operational problem.
+Backlog rises from 34 at 10:00 AM to 71 at 1:00 PM and remains elevated at 68 by 2:00 PM, confirming field repair congestion.
+The zone delay heatmap shows North and West persistently overloaded while South and East remain relatively lighter.
+The dispatch planner note states South slots were underused between 11:30 AM and 1:30 PM while North and West spilled into next-day appointments, and manual cross-zone reassignment was rarely used.
+
+11. Diagnose the structural issue beyond pure headcount.
+The core problem is not triage or scheduling delay.
+It is a field-repair bottleneck made worse by zone-specific dispatch fragmentation, which strands usable capacity in lighter-load zones while overloaded zones accumulate backlog and missed appointments.
+
+12. Evaluate pooled dispatch using the provided pilot benchmark.
+The pooled pilot benchmark shows 2.70 tickets completed per technician in the same 4 hour peak window, with productive field hours improving from 3.65 to 4.30 and travel and idle loss falling from 1.15 hours to 0.55 hours per technician.
+Using the same 24 BAU technicians, pooled dispatch capacity equals 24 x 2.70 = 64.8 tickets in 4 hours, rounded to 65 tickets.
+Equivalent hourly pooled capacity is 65/4 = 16.2 tickets per hour.
+
+13. Compare current zone dispatch with pooled dispatch.
+Current BAU zone dispatch capacity = 55 tickets in peak window.
+Pooled BAU dispatch capacity = 65 tickets in peak window.
+Peak-window requirement = 60 tickets.
+Therefore:
+Current zone dispatch is short by 5 tickets.
+Pooled dispatch exceeds requirement by 5 tickets.
+The pooled model clears the peak requirement without adding permanent contractor technicians.
+
+14. Reject Option A as the main recommendation.
+Option A adds recurring contractor cost to a system whose current performance problem is materially driven by dispatch rigidity and stranded zone capacity.
+Because the pooled model already closes the peak-window gap with the same BAU workforce, permanent technician addition is not the best next 90 day answer.
+
+15. Commit to the final answer.
+The correct recommendation is Adopt Pooled Dispatch Model.
+The operator should treat field repair as the true bottleneck, exclude temporary monsoon technicians from baseline capacity, and shift from zone-specific dispatch to pooled citywide assignment with dynamic slot refill and cross-zone technician allocation.
+
+
+Golden Answer Range
+
+1. Stable peak window used = 10:00 AM to 2:00 PM
+2. Peak demand = 240 tickets in 4 hours
+3. Peak demand rate = 60 tickets per hour
+4. Full-day average explicitly rejected = 42 tickets per hour
+5. BAU field technicians = 24
+6. Current BAU zone dispatch capacity = 55 tickets in 4 hours
+7. Current BAU zone dispatch hourly capacity = 14 tickets per hour
+8. Pooled BAU dispatch capacity = 65 tickets in 4 hours
+9. Pooled BAU dispatch hourly capacity = 16.0 to 16.3 tickets per hour
+10. Current zone dispatch gap to peak requirement = short by 5 tickets
+11. Pooled dispatch gap to peak requirement = surplus of 5 tickets
+Bottleneck = field repair dispatch and execution
+Final decision = Adopt Pooled Dispatch Model",https://drive.google.com/drive/folders/1S-lk8oEzdkp_fzsUhHUEIT57b9F_7bLx,"v1: Response uses the stable peak service window of 10:00 AM to 2:00 PM as the main analysis window
+v2: Response calculates peak-window demand as 240 tickets in 4 hours
+v3: Response calculates peak demand as 60 tickets per hour
+v4: Response does not use 42 tickets per hour as the primary demand rate for diagnosis
+v5: Response identifies that the 28 field technicians shown in the summary are not all routine weekday BAU capacity
+v6: Response excludes the 4 temporary monsoon technicians from baseline field capacity
+v7: Response excludes the weekend recovery van from weekday baseline field capacity
+v8: Response states that the 2 war room coordinators are not field repair technicians
+v9: Response calculates true baseline weekday field technicians as 24
+v10: Response calculates current BAU zone dispatch capacity as about 55 tickets in the 4 hour peak window
+v11: Response identifies field repair as the lowest-capacity stage and therefore the bottleneck
+v12: Response states that effective process capacity is determined by the bottleneck
+v13: Response uses the pooled dispatch benchmark of 2.70 tickets completed per technician in the 4 hour peak window
+v14: Response calculates pooled BAU dispatch capacity as about 65 tickets in the 4 hour peak window using the same 24 BAU technicians
+v15: Response concludes that current zone dispatch is short of the peak-window requirement while pooled dispatch clears it
+v16: Response identifies zone-specific dispatch rigidity or stranded capacity as a core driver of backlog in North and West
+v17: Response rejects permanent contractor addition as the best primary next 90 day answer
+v18: Response recommends Adopt Pooled Dispatch Model as the final decision",540
+tsk_3207127136,HDTF0S,Operations Optimization,RCP,SCP,"You are advising the Chief Operating Officer of a professional basketball franchise, the New York City Hoopers. Fan satisfaction scores have fallen sharply, and season ticket renewals are down 15 percent. The most common complaint is that fans are missing too much live game action while waiting in line for food and beverages. The COO wants approval for a 500000 dollar investment in a new point of sale system that is expected to reduce checkout time. The owner is not convinced that payment is the true constraint and wants proof before approving any capex. A wrong recommendation wastes capital, fails to fix the fan experience, and increases the risk of further attendance decline and commercial underperformance.
+
+Using only the provided internal files, analyze the permanent main bowl concessions process during the stable in game peak demand window and determine whether the proposed POS investment should be approved.
+
+Your analysis must answer all of the following:
+
+Identify the true bottleneck in the concessions process
+
+Calculate the current maximum throughput of the true system in fans served per hour
+
+Calculate the effective cycle time from a fan joining the queue to receiving food in minutes per fan
+
+Recommend either Yes or No on approving the new POS system, with a one sentence justification
+
+Use only the stable peak demand window defined in the files. Use only the current state permanent main bowl concession system when identifying true system capacity. Explicitly exclude any rivalry night surge support, halftime only express runners, mobile pickup pilots, promotional kiosks, premium seating service channels, and any blended full game averages or special event data that fall outside the defined current state system boundary.
+
+If the files contain multiple summary views, dashboards, pilot results, or event specific support arrangements, do not assume the headline figure is valid for bottleneck diagnosis. Use only the data that matches the instructed current state boundary and stable peak window.
+
+The final deliverable must be a short memo with exactly these 4 sections and no additional sections.
+
+Section 1: Current State Metrics
+Bottleneck Station Name, Max Throughput fans per hour, Effective Cycle Time minutes per fan
+
+Section 2: Data Assessment
+One sentence stating which data you used and which data you explicitly excluded
+
+Section 3: Decision and Justification
+Yes or No for new POS system plus one sentence reason
+
+Section 4: Action Plan
+One sentence on what the COO should do instead
+
+Do not use external sources. Do not use full game averages unless the file explicitly states they apply to the stable peak demand window. Do not annualize or normalize one game pilot support into the baseline operating model. The recommendation must be based on the true constraining step in the current process, not on the most visible dashboard metric.","Lazy AI Test
+A standard model will likely anchor on the Executive Dashboard checkout metric of 22 seconds and the reported POS capacity of 1636 fans per hour, include rivalry night express runners, mobile pickup pilot support, or blended full game summaries in its reasoning, and incorrectly recommend Yes on the 500000 dollar POS investment instead of identifying Customization Finish as the true bottleneck at 65.45 fans per hour, overstating true system throughput by about 25 times.
+
+An operations analyst using only the stable 36 minute peak demand window, restricting the system boundary to permanent main bowl concession operations, excluding temporary support channels, pilot channels, premium service lanes, and blended full game averages, would identify Customization Finish as the true bottleneck, calculate current maximum throughput as 65.45 fans per hour, use the observed queue to receipt metric of 18.3 minutes per fan as the effective cycle time, and conclude No on the new POS capex because checkout is not the constraining stage. One correct answer exists.
+
+","1. Use the stable peak demand window and the permanent main bowl concession system only, because the notes explicitly instruct the analyst to exclude rivalry night express runners, pilot pickup support, promotional kiosks, premium service channels, and blended full game averages when calculating true bottleneck capacity.
+
+T2. ake the station capacities from the Peak_Station_Capacity tab and consider only rows marked included_in_true_system_capacity equals Yes, because those rows define the actual current state system boundary.
+
+3. Compute or validate the included station capacities as follows:
+Cashier POS Checkout equals 10 x 3600/ 22 = 1636.36 fans per hour
+Cold Beverage Grab equals 4 x 3600/10 = 1440.00 fans per hour
+Hot Food Assembly equals 5 x 3600/ 95 = 189.47 fans per hour
+Customization Finish equals 2 x 3600/ 110 = 65.45 fans per hour
+Order Handoff Pickup equals 6 x 3600/16 = 1350 fans per hour
+
+4. Compare the included station capacities and identify the lowest one. The lowest included capacity is Customization Finish at 65.45 fans per hour, so Customization Finish is the true bottleneck and also the maximum current throughput of the entire concessions system.
+
+5. Cross check the bottleneck diagnosis with the Menu_Mix_Prep tab. Hot Dog Loaded equals 9 percent of peak orders, Fries Loaded equals 8 percent of peak orders, and Family Combo Meal equals 3 percent of peak orders. These three customization heavy items together account for 20 percent of peak orders and all route to the Customization Finish stage, confirming that menu complexity, not checkout speed, is driving the binding capacity constraint.
+
+6. Use the Queue_Observations_Revised tab for the fan experience time metric because the Data_Notes tab explicitly states that effective cycle time should be interpreted as observed queue to receipt elapsed time. Therefore, effective cycle time equals 18.3 minutes per fan.
+
+7. Evaluate the COO POS capex proposal against the bottleneck result. POS Checkout capacity equals 1636.36 fans per hour, while bottleneck capacity at Customization Finish equals 65.45 fans per hour. Because checkout capacity is far above the constrained stage, adding a new POS system will not materially increase system throughput under the current menu and process design.
+
+8. Conclude the recommendation. Decision equals No. The reason is that the system is constrained by menu driven customization capacity, not payment processing capacity, so spending 500000 dollars on POS would not remove the true bottleneck.
+
+9. Set the operational alternative. The COO should simplify or remove high complexity loaded and customized items, pre batch high volume standard items, and reallocate labor from checkout overcapacity to prep or customization support where feasible. That action directly targets the bottleneck stage and is therefore the correct next move.
+
+10. Golden Answer Range
+Bottleneck Station Name: Customization Finish
+Max Throughput fans per hour: 65.5
+Effective Cycle Time minutes per fan: 18.3
+Decision: No
+Decision Justification: Must explicitly state that POS is not the bottleneck and that menu complexity or customization is the true constraint
+Data Used: Must use the stable peak window, permanent main bowl stands, and only rows marked included_in_true_system_capacity equals Yes
+Data Excluded: Must explicitly exclude temporary express runners, mobile pickup pilot, premium service channels, and blended full game or non peak averages for bottleneck calculation
+Action Plan: Must recommend menu simplification, SKU rationalization, reducing customization, pre batching fast movers, or labor reallocation toward the constrained stage instead of new POS investment",https://drive.google.com/drive/folders/16CJMAKhbBN_cKZIT5Xxbjp_d49_jambe,"V1: Bottleneck Station Name: Customization Finish
+V2: Max Throughput fans per hour: 65.5
+V3: Effective Cycle Time minutes per fan: 18.3
+V4: Decision: No
+V5: States that POS Checkout is not the bottleneck
+V6: States that menu complexity or customization is the true constraint
+V7: Uses the stable peak demand window only
+V8: Uses permanent main bowl concession stands only
+V9: Excludes temporary express runners
+V10: Excludes mobile pickup pilot support
+V11: Uses only rows marked included_in_true_system_capacity equals Yes
+V12: Identifies customization heavy items as 20 percent of peak orders
+V13: States that prior POS improvement did not materially improve total wait time
+V14: Recommends operational action at customization stage instead of new POS investment
+V15: Does not identify Cashier POS Checkout as the bottleneck",400
+tsk_9640198007,KXZMHY,Market Strategy,RCP,LDP,"Mokobara, an Indian D2C travel and lifestyle brand, is preparing its FY2026 investor presentation. The Chief Strategy Officer must recommend whether Mokobara should accelerate its offline retail expansion, doubling its store count from 10 to 20 stores or redirect capital toward international market entry in Southeast Asia. The board requires a decision in 15 days. A wrong recommendation risks misallocating a ₹60 crore capex budget and jeopardising the brand's profitability runway.
+Using only the provided internal files, assess which growth strategy- domestic offline expansion vs. Southeast Asia market entry, creates higher incremental revenue potential for Mokobara over a 3-year horizon (FY2026–FY2028). Determine the correct addressable revenue base for Mokobara's core luggage category, after excluding the divested corporate gifting vertical (disclosed in footnote only). Apply Mokobara's actual SAM capture rate to size the offline expansion opportunity and compare it against the SEA entry scenario modelled in the provided strategy deck.
+Deliver a structured Strategy Memo containing:
+Corrected addressable revenue base (post-exclusion) with explicit footnote citation
+3-year incremental revenue model for both strategic options (table format, ₹ crore)
+Risk-adjusted recommendation: Domestic Expansion or SEA Entry
+One-sentence strategic commit stating which option the CSO should recommend and why?
+Note: All revenue figures in ₹ crore, rounded to one decimal place.
+Time range: FY2026–FY2028 (3-year horizon). No web search or external market reports permitted.","Chatgpt 4o mini used the headline revenue figure of ₹200 crore from the Summary tab of Mokobara_Revenue_Model_FY26.xlsx rather than reading Footnote 7 in cell A187 (disclosing the ₹22 crore Corporate Gifting divestiture). It overstated the core addressable revenue base by ₹22 crore, inflating the domestic expansion 3-year opportunity by approximately ₹10–13 crore, and potentially misrepresenting the relative attractiveness of the two strategies.
+
+Any management consultant must read all three files carefully,  including the footnoted exclusion in the Excel model and extracting only Slides 8–12 from the 32-slide deck, and would apply ₹178 crore as the correct base, producing a domestic expansion 3-year cumulative of ₹114.4 crore vs. SEA's ₹72 crore, and must Recommend Domestic Offline Expansion.","Step 1: Identify and apply the footnote exclusion
+Headline revenue base from Summary tab = ₹200 crore. Footnote 7 (cell A187) discloses Corporate Gifting divestiture = ₹22 crore. Corrected core revenue base = ₹200 – ₹22 = ₹178 crore.
+
+Step 2: Model Domestic Offline Expansion (10 new stores)
+From Mokobara_Store_Economics_India.pdf: Revenue per store = ₹5.2 crore/year. Phased rollout: 4 stores FY26, 4 stores FY27, 2 stores FY28.
+FY26: 4 × ₹5.2 = ₹20.8 crore
+FY27: (4+4) × ₹5.2 = ₹41.6 crore (incremental vs FY26 base: +₹20.8)
+FY28: (8+2) × ₹5.2 = ₹52.0 crore (incremental vs FY27 base: +₹10.4)
+3-Year Cumulative Offline Incremental Revenue = ₹20.8 + ₹41.6 + ₹52.0 = ₹114.4 crore. Capex = ₹25 crore (₹2.5 crore/store × 10 stores, from Mokobara_Store_Economics_India.pdf).
+
+Step 3: Model SEA Market Entry
+From Mokobara_SEA_Strategy_Deck.pptx (Slides 8–12): Year 1 (FY26) = ₹18 crore, Year 2 (FY27) = ₹27 crore, Year 3 (FY28) = ₹27 crore (cumulative ₹72 crore). Capex = ₹35 crore. Note: Slides13–32 (brand/social/loyalty content) are irrelevant and must be excluded from the analysis.
+
+Step 4: Comparison and Decision
+Domestic Expansion: ₹114.4 crore over 3 years at ₹25 crore capex → Revenue/Capex ratio: 4.6x. SEA Entry: ₹72 crore over 3 years at ₹35 crore capex → Revenue/Capex ratio: 2.1x. Domestic Expansion generates 59% higher 3-year revenue at 29% lower capex.
+Golden Answer Range:
+Corrected revenue base: ₹176–₹180 crore. Domestic 3-year cumulative: ₹110–₹118 crore. SEA 3-year cumulative: ₹68–₹76 crore. Decision: Domestic Offline Expansion.
+",https://drive.google.com/drive/folders/1N0t_oxOWkYe8vfJKwBy1K1NjHb8foVYw?usp=drive_link,"V1- Revenue base used for core operations should be ₹178 crore (₹200 crore headline - ₹22 crore Corporate Gifting divestiture from Footnote 7)
+V2- ₹22 crore should be excluded from the revenue base as cited in Footnote 7
+V3- Corporate Gifting vertical treatment should be excluded from FY26–FY28 growth projections and also not used in any forward model
+V4- Domestic 3-year cumulative incremental revenue should be in the range ₹110–₹118 crore (correct calculation using ₹5.2 crore/store economics)
+V5- SEA 3-year cumulative revenue should be in the range ₹68–₹76 crore
+V6- Revenue per store assumption used        should be ₹5.2 crore/year and not any other source
+V7- Slides 13–32 of Mokobara_SEA_Strategy_Deck.pptx i.e. the brand refresh, social media, loyalty programme; should be explicitly excluded from financial analysis
+V8- SEA capex figure used should be ₹35 crore
+V9- Domestic store capex used should be ₹25 crore (₹2.5 crore/store × 10 stores)
+V10- Revenue/Capex ratio comparison should be- Domestic 4.6x vs SEA 2.1x (or equivalent directional comparison showing Domestic is superior)
+V11- All revenue projections confined to 3-year window which is FY2026–FY2028, and  no extrapolation beyond FY28
+V12- Domestic Offline Expansion explicitly recommended over SEA entry
+V13- Luggage revenue share = 55% of corrected ₹178 crore base = ₹97.9 crore 
+V14- Incremental revenue builds year-on-year (FY26 < FY27 < FY28) consistent with phased store openings
+V15- No external data sources used. Analysis derived exclusively from three provided files; no web search, market reports, or third-party data cited
+V16- Store payback period is 18-month from File 3 cited as supporting evidence for domestic expansion attractiveness
+V17- IndiGo partnership narrative (from File 2 noise section) not used as a revenue input in the model",300
+tsk_1754637700,H38R2E,Cost Optimization,SCP,FSP,"CONTEXT:
+- Client: SkyRoute Logistics operates 3 cross-dock sites (PHX1, DFW2, ATL3).
+- Situation: CFO needs a board-ready APPROVE vs DO NOT APPROVE decision for a FY2025 lane optimization lever package.
+- Inputs: (1) FY2024 TMS shipment log, (2) internal transportation policy memo, (3) lane optimization workbook defining levers.
+
+TASK:
+Using the attached internal files AND one required external datapoint:
+1) Build the FY2024 baseline from the TMS log (exclude Pilot and Noise rows).
+2) Normalize baseline to FY2025 using the required PPI index (see Constraints).
+3) Quantify FY2025 run-rate impacts for levers L1-L4 exactly as specified in the workbook (ignore NOISE-tag rows).
+4) Provide a definitive BOARD RECOMMENDATION: APPROVE vs DO NOT APPROVE.
+
+DECISION RULES (no hedging):
+- APPROVE only if BOTH are true:
+  (i) Total run-rate savings from L1+L2+L3 >= Target_RunRate_Savings_USD,
+  (ii) Overall on-time % (excluding Pilot and Noise) >= Service_Min_OnTime_pct,
+  AND all compliance checks PC1-PC5 are PASS per policy memo.
+- Otherwise DO NOT APPROVE.
+- First line must be: DECISION: APPROVE OR DECISION: DO NOT APPROVE
+
+CONSTRAINTS:
+- Retrieve PPI Dec 2025 from FRED table data for series PCU484121484121 and cite the exact URL used.
+- Do NOT use PPI_Dec2025_PLACEHOLDER in workbook.
+- Use 01_TMS_ShipmentLog_2024.csv only; exclude Notes=='Pilot' and any Notes containing 'Noise'.
+- Use only L1-L4 from workbook; ignore Noise_Tag=='NOISE'.
+
+OUTPUT FORMAT (NO OTHER TEXT):
+1) Decision line (single line)
+2) Bridge Table (7 rows exactly; columns: Step_Order | Bridge_Item | USD_2025 | Sign | Notes)
+   - Step_Order 1..7
+   - Row6 = Row1 - (Row2+Row3+Row4+Row5)
+   - Row7 is one-time and not netted into Row6
+3) Compliance Table (5 rows exactly; columns: Check_ID | Check_Name | PASS_FAIL | Evidence)
+   - Checks PC1..PC5 only","Why this task is difficult (what it tests):
+- Hybrid web discipline: the FY2025 normalization MUST use FRED table data for PCU484121484121 (Dec 2025). The workbook contains a decoy placeholder (PPI_Dec2025_PLACEHOLDER=999.900). Using the placeholder will inflate the baseline materially and break the bridge.
+- Multi-layer constraints: the solver must reconcile (a) raw shipment-level costs, (b) strict row exclusions (Pilot + Noise rows), (c) lever applicability definitions, and (d) policy guardrails (service level + carrier concentration + operationally critical exception).
+- Structural brittleness: output requires (1) a single-line decision, (2) a 7-row bridge that ties mathematically, and (3) a 5-row compliance table with PASS/FAIL plus evidence. Any drift is non-compliant.
+- CSV trap: rows where Notes=='Pilot' must be excluded everywhere.
+- CSV noise: rows where Notes contains 'Noise' (e.g., 'Noise: test invoice') must be excluded everywhere.
+- Workbook trap: PPI_Dec2025_PLACEHOLDER is intentionally wrong.
+- Workbook noise: Lever_Assumptions includes rows tagged Noise_Tag=='NOISE' that must be ignored.
+
+Lazy AI must fail (minimum expected failure modes):
+1) Uses workbook placeholder PPI or cites no URL → baseline normalization is wrong and the bridge will not match golden ranges.
+2) Applies levers on unfiltered data (includes Pilot/Noise) → savings + on-time % drift.
+3) Outputs narrative text or changes row counts/column order → automatic non-compliance.
+
+Expert must pass:
+- If the solver (a) retrieves Dec 2025 PPI from FRED and cites the exact table-data URL, (b) applies Pilot+Noise exclusions consistently, (c) applies L1-L4 exactly as defined, and (d) enforces the decision rule without hedging, then the resulting baseline, savings, and decision are deterministic within the stated ranges.","Decision Archetype: Board Recommendation
+
+External datapoint (must still cite URL):
+- Source required: FRED table data for series PCU484121484121.
+- Month required: 2025-12 (Dec 2025) PPI = 181.077.
+- URL to cite (exact): https://fred.stlouisfed.org/data/PCU484121484121
+
+Internal file references:
+- 01_TMS_ShipmentLog_2024.csv
+  - Baseline measure: sum(Total_Cost_USD)
+  - On-time %: mean(On_Time_Flag) * 100
+  - Exclusions: remove rows where Notes == 'Pilot' OR Notes contains 'Noise'
+- 02_Transportation_Policy_Memo.pdf
+  - Policy constraints to operationalize in compliance table:
+    PC1 Index discipline (FRED PPI + URL, no placeholder)
+    PC2 Service guardrail (>= 94.5% on-time, excl Pilot/Noise)
+    PC3 Carrier concentration on Top-3 lanes (<=70% any single carrier)
+    PC4 Operationally critical exception for PHX1->LAX when Mode=='TL' (cap can be 80% with evidence)
+    PC5 Dual-source minimum confirmation on Top-3 lanes (explicit PASS/FAIL with evidence)
+- 03_Lane_Optimization_Model.xlsx
+  - Parameters: Service_Min_OnTime_pct, Target_RunRate_Savings_USD, OneTime_Implementation_Cost_USD
+  - PPI_Reference: Dec 2024 PPI reference = 176.402
+  - Lever_Assumptions: apply L1-L4 exactly; ignore Noise_Tag=='NOISE'
+
+Calculation steps (deterministic):
+1) Filter shipment log:
+   - Keep rows where Notes != 'Pilot' AND Notes does NOT contain 'Noise'.
+2) Compute FY2024 baseline and on-time:
+   - FY2024 baseline cost = sum(Total_Cost_USD).
+   - FY2024 on-time % = mean(On_Time_Flag) * 100.
+3) Retrieve external PPI:
+   - Get Dec 2025 PPI value from FRED PCU484121484121 and capture the exact URL.
+4) Inflation factor:
+   - Inflation factor = (PPI Dec 2025) / (PPI Dec 2024 ref in workbook).
+5) Build FY2025 normalized baseline (USD_2025):
+   - USD_2025 baseline = sum(Linehaul_USD + Accessorial_USD + Fuel_Surcharge_USD * inflation_factor) over filtered rows.
+6) Identify Top-3 lanes (for lever eligibility + concentration checks):
+   - Lane = Origin_Site -> Dest_Site.
+   - Rank lanes by FY2024 spend (sum Total_Cost_USD) and take Top-3.
+7) Lever impacts (run-rate, USD_2025):
+   - L1: 5.0% of Linehaul_USD for eligible TL shipments on Top-3 lanes.
+   - L2: 12% of eligible short-haul LTL subset, savings = 6% of Total_Cost_USD on shifted subset (per assumption).
+   - L3: 30% reduction of Accessorial_USD where Accessorial_USD>0.
+   - L4: Index normalization is already embedded in the FY2025 baseline via step 4-5; do not double-count as a separate ""savings"" line item beyond what the bridge template requires.
+8) Total run-rate savings:
+   - Total savings = L1 + L2 + L3 (per decision rule).
+9) New run-rate cost:
+   - New cost = FY2025 normalized baseline - total savings.
+10) Decision:
+   - APPROVE only if total savings >= Target_RunRate_Savings_USD AND on-time% >= Service_Min_OnTime_pct AND compliance checks are PASS.
+   - Otherwise DO NOT APPROVE.
+
+Golden Answer Ranges (for grading):
+- FY2024 baseline total cost (USD): 235572.29 ± 100.00
+- FY2024 on-time % (excl Pilot & Noise): 96.1290 ± 0.10
+- Inflation factor (Dec25/Dec24): 1.026502 ± 0.0010
+- FY2025 normalized baseline (USD): 236486.38 ± 150.00
+- L1 savings (USD): 3552.01 ± 75.00
+- L2 savings (USD): 81.45 ± 75.00
+- L3 savings (USD): 751.50 ± 75.00
+- Total run-rate savings (USD): 4384.97 ± 150.00
+- New run-rate cost (USD): 232101.42 ± 150.00
+
+Expected recommendation outcome:
+- DECISION: DO NOT APPROVE",https://drive.google.com/drive/folders/1hWuSoOAwWKnRsgqhBB7U8IMOtOhYmbkW?usp=drive_link,"V1 - PPI series must be PCU484121484121 and Dec 2025 value must be sourced from FRED table/data and cited,
+V2 - PPI_Dec2025_PLACEHOLDER=999.9 must NOT be used,
+V3 - PPI Dec 2025 used must be 181.077,
+V4 - PPI Dec 2024 reference must be 176.402 from workbook PPI_Reference,
+V5 - Inflation factor must equal 181.077/176.402 (= 1.02650 within tolerance),
+V6 - Baseline + on-time calculations must exclude Notes==""Pilot"" and any Notes containing ""Noise"" (e.g., ""Noise: test invoice""),
+V7 - FY2024 baseline total cost must be sum(Total_Cost_USD) on filtered rows,
+V8 - FY2024 on-time % must be mean(On_Time_Flag)*100 on filtered rows and must meet Service_Min_OnTime_pct=94.5 for APPROVE,
+V9 - Only L1-L4 may be used and any Lever_Assumptions rows with Noise_Tag==""NOISE"" must be ignored,
+V10 - Total savings used for the decision must be L1+L2+L3 only (L4 must not be counted as separate savings),
+V11 - Target_RunRate_Savings_USD=180000 must be applied to the decision threshold,
+V12 - OneTime_Implementation_Cost_USD=220000 must be treated as one-time and not netted into Row6,
+V13 - Compliance Table must include PC1-PC5 only and each must be PASS/FAIL with evidence (PC1 index discipline; PC2 service; PC3 concentration <=70% on Top-3 lanes; PC4 PHX1->LAX TL exception cap 80% only with evidence; PC5 dual-source minimum on Top-3 lanes),
+V14 - Output must contain only: decision line + 7-row bridge + 5-row compliance table (no extra narrative),
+V15 - Bridge table must be exactly 7 rows and Row6 must reconcile as Row1 - (Row2+Row3+Row4+Row5) with Row7 not netted,
+V16 - First line must be exactly ""DECISION: APPROVE"" or ""DECISION: DO NOT APPROVE"" and expected outcome must be DO NOT APPROVE if savings < 180000 even when service passes.",
+tsk_4726551239,VQSV96,Operations Research,LDP,FSP,"Zinc Manufacturing Pvt. Ltd. is a company which is willing to perform a diversification. The Board of Directors (BOD) is clueless about best strategy to be adopted. They have hired two best external consultants to help them with this open request.
+Over a duration of 3 months, two consultants have already performed their own market assessments as well as investment-return analysis using industry sensing and manufacturing domain connects. The list of sub-steps considered across consultants include different combinations of Capex (Capital Expenditures), sales forecasting (using sales pipeline assessment) for product (0->1 stage), cash flows against the expected life of the manufacturing plant.
+Last week all of them submitted their recommendations to the board of directors.
+
+The BOD wants to know the best strategy amongst the two recommendations by external consultants with the intent to maximize the total probable net profits realized by the opted strategy.
+Please use Strategy A.pptx for detailed recommendations from McKinsey’s consultant.
+Please use Strategy B – Part 1.0.pptx & Strategy B – Part 2.0.pptx for detailed recommendation by Bain’s consultant.
+
+Strictly DO NOT browse the web for any information. Only rely on the internal files provided which are Strategy A.pptx, Strategy B – Part 1.0.pptx & Strategy B – Part 2.0.pptx
+Over the years, the base organizations of consultants have realized that the demand scenarios within the Zinc manufacturing industry strictly be categorized as either “High” or “Low”. There exist no other moderate or interim scenarios.
+There is a limitation to the benchmarked industry standard reports utilized for future analysis or projections. Hence, all consultants are confident of cash flow for next 7 years and the same timeline shall be strictly used for any decision analysis.
+All set-up, expansion related Capex, cash outflow are one time i.e., there is no staggered investment. Similarly, all the cash inflows are single shot at the year end, no staggering patterns observed.
+Do not hallucinate or use/assume datapoints by yourself. Strictly adhere to data points provided in this prompt.
+
+Create an output word document with name of the file as “Zinc Future Strategy - BOD” & include chosen strategy, rationale, realized net profits from each recommendation as well as explain the methodology & decision logics used to arrive at the final go-to strategy.","LAZY AI TEST:
+-        The lazy AI test was performed using ChatGPT LLM basic model and the prompt has been designed with appropriate complexity so that basic model fails. Below are the reasons:
+o        There is a known pitfall created for the LLM where in Strategy A.pptx the Low demand probability has been left blank. Forces LLM to consider constraint of only presence of Low or High demand scenario
+o        There are three .pptx files where Strategy B has been sliced into two different power point files.
+o        There is a diagrammatic phase wise strategy, expansion toll-gating used in synthetic files as well as linguistic driven details, constraints mentioned in PowerPoint files. This requires strong processing, inferencing as well as cross-linking capacities.
+o        All the calculation logic, variables, other details have been disguised. Leaving pure analysis on the LLM
+o        Rather directly asking LLM to not use discounting principles of cash inflow and outflow for decision making. There is indirect constraint to not use any additional data points or assume any data points which forces LLM to stick to the plain logic of aggregating probable net profits.
+o        Additional information regarding discounting, campaign has been mentioned just to confuse the LLM and check its focus and adherence to the task.
+
+EXPERT TEST:
+-        There is just a single business logic which shall be used step by step to ensure that a single correct mathematical logical answer is achieved by a human. Any incorrect logic or missing step will lead to wrong answers.
+","The decision archetype used is Scenario modeling.
+Calculation Steps:
+-        Using constraint in the prompt  Scope of analysis is only restricted to 7 years
+McKinsey consultant’s recommendation analysis:
+-        Investment => 2 Cr
+-        Probability (High Demand) = 0.7
+Using constraint in the prompt  As mentioned in the constraint that demand scenarios within the Zinc manufacturing industry can only be categorized as either “High” or “Low”. There exist no other moderate or interim scenarios.
+-        Probability (Low Demand) = 1-0.7=0.3
+
+-        Total Returned Cash Flow =>
+
+o        If for next 7 years, there is ‘High’ demand scenario then net cash inflow => 7X(50,00,000) = 350,00,000 Rs or 3.5 Cr
+o        If for next 7 years, there is ‘Low’ demand scenario then net cash inflow => 7X(10,00,000) = 70,00,000 Rs or 0.7 Cr
+Net value gained via McKinsey Strategy = Sum [ (Probability of Scenario) X (Scenario Net Profit) ] => 
+o        [Probability (High Demand) X High-demand Net profit] + [Probability (Low Demand) X Low-demand Net profit]
+o        [0.7X(-2+3.5)] + [0.3X(-2+0.7)]
+o        [0.7X1.5] + [0.3X-1.3]
+o        0.66 Cr
+Bain’s consultant’s recommendation analysis:
+-        Investment => 1 Cr
+-        During Phase 1: 
+-        Probability (Low Demand) = 0.5
+Using constraint in the prompt As mentioned in the constraint that demand scenarios within the Zinc manufacturing industry can only be categorized as either “High” or “Low”. There exist no other moderate or interim scenarios.
+-        Probability (High Demand) = 1-0.5=0.5
+
+-        Total Returned Cash Flow (Phase 1) =>
+
+o        If for next 2 years, there is ‘High’ demand scenario then net cash inflow => (High Demand Year 1 + High Demand Year 2) => (50,00,000 +80,00,000) = 130,00,000 Rs or 1.3 Cr
+o        If for next 2 years, there is ‘Low’ demand scenario then net cash inflow => (Low Demand Year 1 + Low Demand Year 2) => (10,00,000+30,00,000) = 40,00,000 Rs or 0.4 Cr
+-        Expansion Decision Point =>
+o        If Phase 1 has ‘High’ demand, then cash outflow for expansion is 0.5 Cr.
+o        If Phase 1 has ‘Low’ demand, then cash outflow for expansion is 0 Rs.
+-        During Phase 2:
+-        Probability (Low Demand) = 0.4
+As mentioned in the constraint that demand scenarios within the Zinc manufacturing industry can only be categorized as either “High” or “Low”. There exist no other moderate or interim scenarios.
+-        Probability (High Demand) = 1-0.4=0.6
+
+-        Total Returned Cash Flow (Phase 2) =>
+
+o        If for next 5 years, there is ‘High’ demand scenario then net cash inflow =>(High Demand Year 1 + High Demand Year 2 + High Demand Year 3 + High Demand Year 4 + High Demand Year 5) => (50,00,000 + 80,00,000 + 70,00,000 + 50,00,000 + 60,00,000) = 310,00,000 Rs or 3.1 Cr
+o        If for next 5 years, there is ‘Low’ demand scenario then net cash inflow => (Low Demand Year 1 + Low Demand Year 2 + Low Demand Year 3 + Low Demand Year 4 + Low Demand Year 5) => (10,00,000+30,00,000+20,00,000+50,00,000 + 60,00,000) = 170,00,000 Rs or 1.7 Cr
+
+Phase 2 Net Value:
+Expansion Scenario:
+o        Sum [ (Probability of Scenario) X (Revenue for scenario) ]
+        [0.6 (3.1) + 0.4 (1.7) ] = 1.86+0.68 = 2.54 Cr
+o        There is expansion investment = 2.54 Cr – 0.5 Cr = 2.04 Cr
+Non-Expansion Scenario:
+o        Sum [ (Probability of Scenario) X (Revenue for scenario) ]
+        [0.6 (3.1) + 0.4 (1.7) ] = 1.86+0.68 = 2.54 Cr
+o        There is no expansion investment = 2.54 Cr – 0 Cr = 2.54 Cr
+Aggregation with Phase 1 Values:
+o        Phase 2 Expansion Aggregated Value + Phase 1 value High demand value
+        2.04 Cr + 1.3 Cr =>3.34 Cr
+o        Phase 2 No-Expansion Aggregated Value + Phase 1 value High demand value
+        2.54 Cr + 0.4Cr =>2.94 Cr
+Net Value from Bain’s Strategy:
+o        Sum [ (Probability of Scenario) X (Revenue for scenario) ]
+o        [0.5X(3.34)] + [0.5X(2.94)] => 3.14 Cr
+Removing the initial investment value of 1 Cr = 3.14 Cr – 1 Cr = 2.14 Cr
+
+Golden Range Answer: 
+An output word document with name of the file as “Zinc Future Strategy - BOD” which contains finally recommended strategy as Bain’s Strategy. The rationale shall clearly outline the logic used for aggregating the probability-based net-profits at different branching points. An optimal substantiation of numbers to back the final recommendation. The Bain’s total probable net profits shall be equivalent to 2.14 Cr (Error Range +/-0.007) & McKinsey’s total probable net profits shall be equivalent to 0.66 Cr (Error Range +/-0.01).
+",https://drive.google.com/drive/folders/1sSSrdzoE_91SqrLj9PTIGtUqwFQi2x8G?usp=drive_link,"V1: The file name of the output file shall be ""Zinc Future Strategy - BOD"",
+V2: The file format shall be a word document,
+V3: The finally recommended strategy is Bain’s Strategy,
+V4: The rationale should outline the aggregating the logic used something similar in woridings of ""Sum [ (Probability of Scenario) X (Scenario realized Net Profit or value or revenue) ]"",
+V5: Bain’s total probable net profits shall be equivalent to 2.14 (Error Range +/-0.007) ,
+V6: McKinsey’s total probable net profits shall be equivalent to 0.66 (Error Range +/-0.01),
+V7: Sum of demand probabilities within phases of a strategy is 1,
+V8: Bain's scenario should not include an expansion in Phase 2 when Low demand is observed in Phase 1,
+V9: There shall be no use of discounting methodology or framework as there is no disounting rate or percentage provided in prompt,
+V10: Bain's scenario should strictly include an expansion in Phase 2 when High demand is observed in Phase 1,
+V11: There shall be only two scenarios for McKinsey consultant strategy & four sub-scenarios in bain's strategy",
+tsk_4902728654,56PDWN,Operations Optimization,LDP,RCP,"Client: SwiftShip Logistics Pvt. Ltd.
+Context
+
+SwiftShip Logistics Pvt. Ltd. is a national parcel distribution company operating a hub-and-spoke logistics network across India:
+
+3 Primary Hubs
+6 Regional Sorting Centers
+48 Delivery Nodes
+
+Packages move daily through fixed routes with predefined capacities.
+
+Over the past 9 months:
+
+Average delivery time increased by 18%
+On-time delivery dropped from 96% to 87%
+Total shipment volume remained stable
+Conflicting Internal Narratives
+Operations: Delays are caused by insufficient hub capacity
+Network Planning: Suboptimal flow allocation across routes
+Finance:
+Some routes are over-utilized (>95%) and congested
+Others are under-utilized (<60%) despite available capacity
+
+Additionally:
+
+A ₹60 crore capex proposal has been submitted to expand Hub H2
+Leadership is uncertain whether:
+the network is capacity constrained, or
+flow allocation is inefficient
+
+The CEO has mandated a deterministic, data-backed flow optimization analysis before approving expansion.
+
+A wrong decision risks:
+
+₹60+ crore capital misallocation
+Continued delivery performance deterioration
+Task
+
+Using only the provided internal datasets, you must:
+
+Reconstruct actual network flow per route
+Explicitly compute:
+Actual Flow = Reported Flow + Overflow Flow (for each route)
+Recalculate route utilization correctly
+Utilization = Actual Flow / Max Capacity
+Identify network bottlenecks
+Only after correcting flow distortions
+Quantify flow imbalance across routes (%)
+Define as:
+Difference between highest and lowest route utilization after correction
+Reallocate shipment flow optimally across available routes
+Demonstrate post-optimization state
+Show expected utilization range across routes after reallocation
+Rank the top 3 interventions based on impact and feasibility
+Resolve contradictions across datasets explicitly
+Especially:
+Overloaded routes vs idle hub capacity
+Constraints (Strictly Enforced — RCP + LDP)
+Do NOT browse the web
+Use ONLY the provided datasets
+Do NOT assume reported route utilization reflects actual flow
+Do NOT ignore overflow routing
+Do NOT evaluate hub capacity independently of route-level flow
+Every numeric value in your output must be traceable to a specific field in a provided dataset
+Any external assumption or inferred number = failure
+You must resolve contradictions across datasets before concluding
+This is a closed-system reasoning task
+Output Format (STRICT)
+Section A – Executive Memo (Max 250 words)
+Key findings
+Bottleneck identification
+Final recommendation (explicit decision on capex)
+Section B – Corrected Flow Metrics
+Metric        Reported        Corrected        Explanation
+Route Utilization (%)                        
+Hub Utilization (%)                        
+Network Throughput                        
+Section C – Flow Imbalance Model
+Route        Capacity        Actual Flow        Utilization        Gap
+Section D – Prioritized Interventions
+Rank        Intervention        Expected Impact (%)        Feasibility        Reason
+Section E – Root Cause Classification
+
+Select exactly ONE:
+
+Capacity Constraint Issue
+Flow Allocation Issue
+Data Reporting Issue
+
+Note:
+Classification must reflect the primary driver of inefficiency after correcting data distortions, not intermediate data issues.
+
+Section F – Contradiction Resolution
+
+Explain clearly:
+
+Why overloaded routes coexist with underutilized hubs
+What this implies about the true system constraint
+Section G – Post-Optimization State
+
+Show:
+
+Expected utilization range across routes after reallocation
+How imbalance is reduced","Sanity Check (Lazy AI Trap — Must Fail)
+
+A standard model will:
+
+Use Reported Flow directly without reconstructing Actual Flow
+Ignore Overflow Flow or mention it without explicitly computing:
+→ Actual Flow = Reported Flow + Overflow Flow for each route
+Partially adjust flow but fail to propagate corrections into:
+Route utilization
+Bottleneck identification
+Final recommendations
+Treat reported utilization as actual utilization
+Assume hub utilization reflects real congestion (ignoring that it is averaged, not peak-based)
+Accept the Operations narrative:
+→ “Hub capacity is insufficient”
+Fail to reconcile the contradiction between:
+Overloaded routes (>100% utilization after correction)
+Underutilized routes (<60–70%)
+Idle hub capacity
+Treat congestion as a capacity problem rather than an allocation problem
+Ignore:
+Alternative routes
+Underutilized capacity
+Inefficient overflow routing
+Skip or incompletely perform:
+Full network flow reconstruction
+Quantification of flow imbalance
+Explicit contradiction resolution
+Provide non-traceable numbers or use approximations without linking them to specific dataset fields
+Fail to demonstrate post-optimization state (balanced utilization after reallocation)
+Recommend:
+→ ₹60 crore Hub H2 expansion
+Error Impact
+Underestimates actual route congestion due to hidden overflow
+Misreads network as capacity-constrained
+Fails to detect allocation inefficiency
+Ignores available idle capacity in the system
+Produces non-auditable (non-traceable) analysis
+Misallocates capital toward unnecessary expansion
+Incorrect Outcome
+
+→ Recommends Hub H2 expansion (₹60 crore capex)
+→ Misclassifies problem as Capacity Constraint Issue
+→ Fails to reconstruct actual flow or quantify imbalance
+→ Does not demonstrate improved utilization post-intervention
+","Decision Archetype: Resource Allocation / Network Flow Optimization
+
+Step 1: Anchor the Diagnostic in Volume–Throughput Logic
+
+Total shipment volume has remained stable, yet delivery performance has deteriorated.
+
+→ This immediately weakens the capacity constraint hypothesis
+→ If capacity were binding, demand would need to exceed system limits
+
+Reframe:
+This is not a “more volume than capacity” problem
+This is a “same volume, worse flow execution” problem
+
+Step 2: Identify Metric Distortion in Reported Flow
+
+From the Policy Document / Route Flow dataset:
+
+Reported Flow includes only primary allocations
+Overflow Flow (rerouted shipments) is excluded
+
+Implication:
+Reported utilization systematically understates true load on congested routes
+
+Step 3: Reconstruct Actual Network Flow (Mandatory Calculation)
+
+For each route:
+
+Actual Flow=Reported Flow+Overflow Flow
+
+Then compute:
+
+Utilization=
+Max Capacity
+Actual Flow
+        ​
+
+
+Result:
+
+Some routes exceed 100% utilization
+Some routes remain <60–70% utilized
+
+→ This confirms localized congestion with simultaneous idle capacity
+
+Step 4: Identify Bottlenecks After Correction
+
+Using corrected utilization:
+
+Overloaded routes:
+Carry both primary and overflow traffic
+Operate above capacity (>100%)
+Underutilized routes:
+Available capacity unused
+Operate below ~60–70%
+
+Key Insight:
+Bottlenecks exist — but they are distributional, not structural
+
+Step 5: Quantify Flow Imbalance
+
+Define imbalance as:
+
+Flow Imbalance (%)=Max Utilization−Min Utilization
+
+From corrected data:
+
+→ Expected range: ~30–40% variance
+
+Interpretation:
+The network is highly skewed, not capacity constrained
+
+Step 6: Reconcile Hub-Level Contradiction
+
+From Hub_Utilization dataset:
+
+Some hubs show 20–40% idle capacity
+Yet connected routes show >100% utilization
+
+Contradiction:
+
+Route-level data → congestion
+Hub-level data → spare capacity
+
+Resolution:
+
+Capacity exists but is misallocated across routes
+Flow is not being routed efficiently through available infrastructure
+Step 7: Decompose Root Drivers
+
+Three components of inefficiency:
+
+Overloaded Primary Routes
+Excess flow due to poor allocation
+Underutilized Alternate Routes
+Available but not used
+Inefficient Overflow Routing
+Rerouting exists but is suboptimal
+
+Conclusion:
+All drivers point to allocation inefficiency, not capacity shortage
+
+Step 8: Test Competing Hypotheses
+Hypothesis 1: Capacity Constraint Issue
+
+Would require:
+
+All routes near saturation
+No idle capacity
+
+→ Not observed
+
+Hypothesis 2: Data Reporting Issue
+
+Exists:
+
+Overflow is hidden
+
+But:
+
+After correction, imbalance persists
+
+→ Not root cause
+
+Correct Conclusion:
+
+→ Flow Allocation Issue
+
+Step 9: Reallocate Flow (Optimization Step)
+
+Objective:
+
+Reduce overloaded routes
+Increase utilization of underused routes
+
+Approach:
+
+Shift overflow and excess load from:
+Routes >100% utilization
+→ to routes <60–70% utilization
+Respect route capacity constraints
+Step 10: Demonstrate Post-Optimization State
+
+After redistribution:
+
+Route utilization converges to:
+→ ~75–85% balanced range
+Overloaded routes:
+→ Reduced below 100%
+Underutilized routes:
+→ Increased toward optimal range
+Flow imbalance:
+→ Reduced significantly
+
+Result:
+
+Improved throughput stability
+Reduced congestion
+Better delivery performance
+Step 11: Map Interventions to Drivers
+Driver        Intervention
+Uneven flow distribution        Dynamic route allocation
+Idle capacity        Load balancing across routes
+Inefficient overflow        Optimized rerouting logic
+Step 12: Rank Interventions
+Dynamic Flow Redistribution
+Highest impact
+Immediate effect
+Load Balancing Across Routes
+Improves utilization efficiency
+Rerouting Optimization
+Enhances system responsiveness
+Step 13: Validate Capex Proposal
+Proposal:
+
+→ ₹60 crore Hub H2 expansion
+
+Test:
+
+Capex is justified only if:
+
+System-wide capacity constraint exists
+Observation:
+Idle capacity exists in network
+Bottlenecks are localized
+Conclusion:
+
+→ Capex does NOT address root cause
+
+Step 14: Final Recommendation
+Reject / Defer Hub H2 expansion
+Prioritize:
+Flow redistribution
+Load balancing
+Routing optimization
+Step 15: Enforce Full Traceability (CRP Discipline)
+
+Before finalizing:
+
+Every flow value → must map to dataset fields
+Every utilization value → derived explicitly
+Every imbalance metric → computed, not estimated
+
+No external assumptions. No approximations.
+
+Golden Answer Range (Validation Band)
+Overloaded routes: >100–110% utilization
+Underutilized routes: ~50–65% utilization
+Flow imbalance: ~30–40% variance
+Post-optimization utilization: ~75–85%
+Root cause: Flow Allocation Issue",https://drive.google.com/drive/folders/1g8daxRGbrCI85v90aGDwzAtZx6v34iUU,"V1 - Actual Flow must be calculated as Reported_Flow + Overflow_Flow for each route,
+V2 - Reported utilization must not be used directly without incorporating overflow adjustments,
+V3 - Corrected route utilization must be computed as Actual Flow / Max Capacity,
+V4 - At least some routes must be identified with utilization exceeding 100% after correction,
+V5 - At least some routes must be identified with utilization below ~60–70% indicating underutilization,
+V6 - Hub utilization must be interpreted as averaged and not reflective of peak congestion,
+V7 - Contradiction between overloaded routes and idle hub capacity must be explicitly identified and resolved,
+V8 - Flow imbalance across routes must be quantified (approximately ~30–40% variance),
+V9 - Overflow routing must be recognized as hidden load that distorts true network utilization,
+V10 - Total network capacity must be shown as sufficient when considering all routes collectively,
+V11 - Root cause must be classified as Flow Allocation Issue (not Capacity Constraint Issue or Data Reporting Issue),
+V12 - Capacity expansion (₹60 crore hub expansion) must be explicitly rejected or deferred,
+V13 - Flow redistribution from overloaded routes to underutilized routes must be proposed as a solution,
+V14 - Top interventions must include dynamic routing, load balancing, and optimized rerouting logic,
+V15 - Final solution must demonstrate improved balanced utilization across routes (~75–85% range after reallocation)",
+tsk_4140790588,R933CQ,Cost Optimization,SCP,FSP,"CONTEXT:
+- Client: NovaRetail (fast-fashion) runs 3 fulfillment sites: PHX1, DFW2, ATL3.
+- Situation: CFO needs a definitive walk-away decision on the proposed PHX1 storage rate while executing network-wide efficiency levers.
+- Inputs: (1) FY2024 warehouse activity log, (2) internal warehousing policy memo, (3) cost model workbook with levers and templates.
+
+TASK:
+Using the attached internal files AND one required external datapoint:
+1) Build the FY2024 run-rate baseline from the activity log (exclude Pilot and Noise rows).
+2) Inflate the baseline to FY2025 using the required external index (see Constraints).
+3) Quantify FY2025 run-rate impacts of levers L1-L4 exactly as specified in the workbook (ignore NOISE-tag rows).
+4) Provide a definitive WALK-AWAY THRESHOLD decision for PHX1: ACCEPT vs WALK AWAY.
+
+DECISION RULES (no ""it depends""):
+- Compute Walk-Away Threshold (USD/pallet-week) = (Benchmark storage rate inflated to FY2025) + WalkAway_Buffer_USD_per_PalletWeek.
+- ACCEPT only if: Proposed PHX1 storage rate <= threshold AND total run-rate savings >= Target_RunRate_Savings_USD AND each site’s avg Fill Rate (excl Pilot/Noise) >= Min_FillRate_pct_per_site AND PC1-PC5 are PASS.
+- Otherwise WALK AWAY.
+- First line must be exactly: DECISION: ACCEPT OR DECISION: WALK AWAY
+
+CONSTRAINTS:
+- Retrieve PPI value for 2025-12 from FRED table data series PCU49314931 and cite the exact URL used.
+- Do NOT use PPI_Dec2025_PLACEHOLDER in workbook (trap).
+- Use 01_Warehouse_ActivityLog_FY2024.csv only; exclude Notes=='Pilot' and Notes containing 'Noise'.
+- Use only L1-L4; ignore Noise_Tag=='NOISE'.
+
+OUTPUT FORMAT (NO OTHER TEXT):
+1) Decision line (single line)
+2) Bridge Table (7 rows exactly; columns: Step_Order | Bridge_Item | USD_2025 | Sign | Notes)
+   - Row6 = Row1 - (Row2+Row3+Row4+Row5)
+   - Row7 one-time not netted into Row6
+3) Compliance Table (5 rows exactly; columns: Check_ID | Check_Name | PASS_FAIL | Evidence)
+   - Checks PC1..PC5 only","Why this task is difficult (what it tests):
+- Hybrid discipline: must use FRED table data PPI PCU49314931 for 2025-12; workbook contains a decoy placeholder.
+- Multi-source synthesis: weekly ops baseline → inflation → multiple lever bases (labor, cartons, overtime premium, storage-rate discipline).
+- Guardrail rigidity: binary ACCEPT/WALK AWAY; site-level fill-rate guardrail (>=98.0% at each site) plus savings threshold plus policy compliance.
+- CSV has Pilot and Noise rows; both must be excluded from baseline + levers.
+- Workbook has Noise_Tag=='NOISE' rows and a PPI placeholder trap.
+
+Lazy AI must fail:
+1) Uses placeholder PPI or omits URL → wrong inflation factor and wrong bridge dollars.
+2) Uses network-average fill rate instead of enforcing site-level guardrail → wrong decision.
+3) Outputs anything besides the decision line + 7-row bridge + 5-row compliance table (order/row count drift) → non-compliant.
+
+Expert must pass:
+- With correct PPI retrieval + consistent exclusions + exact lever rules, outputs are deterministic within golden ranges.","Decision Archetype: Walk-Away Threshold
+
+External datapoint (must still cite URL):
+- FRED table data series PCU49314931; 2025-12 value = 157.039.
+  Exact URL to cite: https://fred.stlouisfed.org/data/PCU49314931
+
+Internal references:
+- 01_Warehouse_ActivityLog_FY2024.csv: Avg_Stored_Pallets, Outbound_Cartons, Regular_Labor_Hours, Overtime_Labor_Hours, Fill_Rate_pct.
+  Exclusions: Notes=='Pilot' OR Notes contains 'Noise'.
+- 02_Warehousing_Policy_Memo.pdf: policy evidence for PC1-PC5.
+- 03_Warehousing_Cost_Model.xlsx: Parameters + Lever_Assumptions (ignore Noise_Tag=='NOISE'); PPI_Dec2024_Reference=152.880.
+
+Calculation steps:
+1) Filter out Pilot + Noise rows.
+2) Compute per-site average fill rate; enforce >= 98.0% at each site.
+3) FY2024 baseline cost (Dec 2024 basis):
+   Storage = sum(Avg_Stored_Pallets) * Benchmark_Storage_Rate_USD_per_PalletWeek_Dec2024
+   Regular labor = sum(Regular_Labor_Hours) * $22.50/hour
+   Cartons = sum(Outbound_Cartons) * $0.18/carton
+   OT premium = sum(Overtime_Labor_Hours) * $9.50/hour
+4) Inflation factor = PPI(2025-12) / PPI_Dec2024_Reference.
+5) FY2025 baseline = FY2024 baseline * inflation factor.
+6) Levers (FY2025$):
+   L1 = 4.0% of regular labor dollars.
+   L2 = 3.0% carton reduction * $0.18.
+   L3 = 12.0% of OT premium dollars.
+   L4: Compare proposed PHX1 storage rate to walk-away threshold; if proposed > threshold, L4 savings=0 and decision WALK AWAY; else savings from reducing to benchmark.
+7) Walk-away threshold = (Benchmark Dec2024 rate * inflation factor) + buffer.
+8) Total savings and new cost; apply decision rule.
+
+Golden Answer Ranges:
+- FY2024 baseline cost (USD): 13,599,198.08 ± 500.00
+- Inflation factor: 1.027204 ± 0.0010
+- FY2025 baseline cost (USD): 13,969,155.33 ± 1,000.00
+- L1 savings (USD): 162,532.41 ± 500.00
+- L2 savings (USD): 45,693.35 ± 250.00
+- L3 savings (USD): 18,086.20 ± 250.00
+- L4 savings (USD): 0.00 ± 1,000.00
+- Total run-rate savings (USD): 226,311.96 ± 1,000.00
+- New run-rate cost (USD): 13,742,843.37 ± 1,500.00
+- Walk-away threshold (USD/pallet-week): 4.3615 ± 0.01
+- Expected decision: WALK AWAY",https://drive.google.com/drive/folders/10kWJodjogQlZEtowCHMbjIyriC7t7l9W?usp=drive_link,"V1 - FRED table-data series must be PCU49314931 and Dec 2025 value must be retrieved and cited (exact URL required),
+V2 - PPI_Dec2025_PLACEHOLDER=999.9 must NOT be used,
+V3 - PPI(2025-12) used must be 157.039,
+V4 - PPI_Dec2024_Reference must be 152.88 and inflation factor must equal 157.039/152.88 (= 1.027204 within tolerance),
+V5 - Notes=='Pilot' OR Notes containing 'Noise' must be excluded from baseline, fill-rate checks, and all lever calculations,
+V6 - Min_FillRate_pct_per_site=98 must be enforced at EACH site (not a network average),
+V7 - WalkAway_Buffer_USD_per_PalletWeek must be 0.15 and threshold must be (Benchmark_Storage_Rate_Dec2024*inflation_factor)+0.15,
+V8 - Benchmark_Storage_Rate_USD_per_PalletWeek_Dec2024 must be 4.10 and be used in the threshold build,
+V9 - Proposed_Storage_Rate_USD_per_PalletWeek_PHX1 must be 4.62 and compared to the walk-away threshold,
+V10 - Target_RunRate_Savings_USD=260000 must be applied to the decision rule (run-rate only),
+V11 - Only L1-L4 may be applied and any Lever_Assumptions rows with Noise_Tag=='NOISE' must be ignored,
+V12 - OneTime_Implementation_Cost_USD=275000 must not be netted into Row6 (Row7 separate),
+V13 - Output must include only: decision line + 7-row bridge + 5-row compliance table (no extra narrative),
+V14 - Bridge table must be exactly 7 rows and Row6 must reconcile as Row1 - (Rows2+Rows3+Rows4+Rows5) with Row7 not netted,
+V15 - First line must be exactly ""DECISION: ACCEPT"" or ""DECISION: WALK AWAY"" and expected decision must be WALK AWAY if proposed rate > threshold or if savings < 260000 or if any site fill-rate < 98 or if any PC fails.",
+tsk_9128509297,Q9BV5H,Market Strategy,RCP,SCP,"EnerDrive Technologies Pte. Ltd. is a Chinese EV battery and powertrain company evaluating entry into the Indian premium EV passenger car market (₹15 Lakhs – ₹40 Lakhs price band) via a Joint Venture with IndraMotors Limited.
+Create a go/no-go decision on a USD 120 million (~₹10,200 Cr) JV commitment case for Enerdrive. 
+Prepare the Certified Market Report. The data spans multiple markets (China, Southeast Asia, India), multiple vehicle segments (2-wheelers, 3-wheelers, buses, passenger cars), and includes extensive supplementary material.
+Using ONLY the files provided (no external search), prepare a Certified Market Report structured as follows:
+SECTION 1 - SAM DERIVATION TABLE: Identify the headline FY2027 SAM from the provided data files. State the source file and tab/section. Show the figure before any adjustments.
+SECTION 2 - FLEET EXCLUSION ADJUSTMENT: Identify the fleet/commercial operator exclusion requirement from the JV Term Sheet. State the relevant clause. Identify the fleet percentage from the market data files. State the source file and section. Compute the fleet-adjusted Retail SAM.
+SECTION 3 - THRESHOLD COMPARISON: Compare your computed Certified Retail SAM against the minimum threshold specified in the JV Term Sheet. State both figures, the gap, and the directional conclusion.
+SECTION 4 - GO / NO-GO RECOMMENDATION: State a clear Go or No-Go recommendation with a one-paragraph rationale. Specify which files and clauses support your recommendation.
+Do not rely on any single headline figure from an Executive Summary without first verifying whether any adjustments are required under the JV Term Sheet's market definition. All SAM figures cited must be traceable to a specific file, tab/section, and clause.","Chat GPT 4-o mini confused total SAM (₹48,000 Cr) with Certified RETAIL SAM. It failed to apply the fleet exclusion required by Clause 4.2 of the JV Term Sheet. The resulting GO recommendation exposed EnerDrive to a non-compliant Investment Committee submission and potential contract breach under Clause 4.2. The error is a classic Relevance Compression failure – the LLM found the loudest number (headline SAM) and stopped reading.
+A Management consultant expert will read all three files carefully and perform the following-
+Read the JV Term Sheet first (File-JV_TermSheet_EnerDrive_IndraMotors_Draft.docx) to understand the rules before touching market data.
+Identify Clause 4.2 as defining Addressable Market = retail only, explicitly excluding fleet categories.
+Identify Clause 3.1 as setting the non-waivable ₹40,000 Cr minimum threshold for the Certified Retail SAM.
+Read File-India_EV_Passenger_Market_FY27.xlsx Executive_Summary and note ₹48,000 Cr as the starting SAM figure - but flag that it includes all end-users.
+Scroll to Vehicle_Category_Mix tab, Section I and find the purchase channel breakdown at rows 87-102.
+Calculate fleet = 36,000 units = 18.0% of 2,00,000. Note the explicit Analytical Note at rows 99-102.
+Cross-check with File-Asia_Pacific_EV_Intelligence_Report.docx, Appendix B, Footnote 3 for independent confirmation of 18% fleet.
+Apply: ₹48,000 Cr × (1 - 0.18) = ₹39,360 Cr = Certified Retail SAM.
+Compare: ₹39,360 Cr < ₹40,000 Cr. Gap = −₹640 Cr (−1.6%). Threshold not met.
+Output: NO-GO. Cite File-JV_TermSheet_EnerDrive_IndraMotors_Draft.docx Clause 3.1, Clause 4.2, File-Asia_Pacific_EV_Intelligence_Report.docx Appendix B Footnote 3, and File-India_EV_Passenger_Market_FY27.xlsx Vehicle_Category_Mix Section I.
+Output- Certified Retail SAM = ₹39,360 Cr. This is ₹640 Cr (1.6%) below the ₹40,000 Cr non-waivable minimum threshold specified in Clause 3.1 of the JV Term Sheet. The JV cannot proceed to Financial Close under the current market conditions. 
+DECISION: NO-GO.
+","STEP 1 - Read the JV Term Sheet (File-JV_TermSheet_EnerDrive_IndraMotors_Draft.docx) before touching market data
+Clause 4.2: Addressable Market = retail consumers only. Ride-hailing, self-drive rental, govt fleet, and corporate fleet are explicitly excluded.
+Clause 3.1: Minimum Certified Retail SAM threshold = ₹40,000 Cr (FY2027). Non-waivable.
+This establishes that any headline SAM figure that includes fleet must be adjusted before applying to the threshold test.
+STEP 2 - Identify the headline SAM figure (before adjustment)
+File-India_EV_Passenger_Market_FY27.xlsx, Tab: Executive_Summary, Cell E25:
+Headline SAM (FY2027, ₹15L–₹40L, India): ₹48,000 Cr
+Corroborated by: File-India_EV_Passenger_Market_FY27.xlsx Segment_Breakdown tab (2,00,000 units × ₹24L ASP = ₹48,000 Cr)
+Also referenced in: File-Asia_Pacific_EV_Intelligence_Report.docx, Section 5.1 ('total segment revenue of ₹48,000 Cr').
+This is the TRAP figure - a standard agent stops here and concludes ₹48,000 Cr > ₹40,000 Cr → GO (incorrect).
+STEP 3 - Reject all out-of-scope data tabs / sections
+The following must be explicitly excluded from the SAM calculation:
+File-India_EV_Passenger_Market_FY27.xlsx: EV 2Wheeler Market, EV 3Wheeler ERickshaw, EV Bus CV Market - wrong vehicle category
+File-India_EV_Passenger_Market_FY27.xlsx: State_Penetration - covers all price bands, not ₹15L-₹40L specific
+File-India_EV_Passenger_Market_FY27.xlsx: Macro_Assumptions - model inputs only; note explicitly warns against using for JV thresholds
+File-Asia_Pacific_EV_Intelligence_Report.docx: Sections 1-4 - China, SEA, and India 2-wheeler data; not India passenger car
+File-Asia_Pacific_EV_Intelligence_Report.docx: Section 6 - European regulatory framework; irrelevant
+File-JV_TermSheet_EnerDrive_IndraMotors_Draft.docx: Sections 2, 5-10 - JV governance, technology, exits; irrelevant to market sizing
+STEP 4 - Locate the fleet adjustment percentage (SIGNAL)
+The fleet percentage is available in TWO independent sources:
+SOURCE A (File- India_EV_Passenger_Market_FY27.xlsx): Vehicle_Category_Mix tab, Section I - Purchase Channel Analysis (rows 87-102):
+Fleet / Commercial - Ride-hailing ops: 21,500 units (10.75%)
+Fleet / Commercial - Self-drive rental: 8,500 units (4.25%)
+Government / PSU Fleet: 6,000 units (3.00%)
+Combined fleet: 36,000 units = 18.0% of 2,00,000 total
+Row 102 explicitly states: 'Retail-only SAM = ₹48,000 Cr × (1 − 18%) = ₹39,360 Cr'
+SOURCE B (File-Asia_Pacific_EV_Intelligence_Report.docx): Appendix B, Footnote 3:
+'Fleet/commercial purchases represent approximately 18% of projected FY2027 unit volumes'
+'Retail-Only SAM = ₹48,000 Cr × (1 − 18%) = ₹39,360 Cr'
+Both sources are in agreement: fleet = 18%, ASP-comparable to retail (within 2.1%)
+STEP 5 - Compute the Certified Retail SAM
+| Calculation Step                  | Figure                              | Source                                                                     |
+| --------------------------------- | ----------------------------------- | -------------------------------------------------------------------------- |
+| Headline SAM (total, incl. fleet) | ₹48,000 Cr                          | File 1, Executive_Summary tab                                              |
+| Fleet/commercial % of volume      | 18.0%                               | File 1, Vehicle_Category_Mix, Section I, rows 99–102 + File 2, App B, Fn 3 |
+| Fleet ASP vs retail ASP           | Within 2.1% — treated as equivalent | File 2, App B, Fn 3 + File 1, Section I                                    |
+| Fleet value deducted              | ₹48,000 Cr × 18% = ₹8,640 Cr        | Calculation                                                                |
+| CERTIFIED RETAIL SAM              | ₹48,000 Cr − ₹8,640 Cr = ₹39,360 Cr | Calculation — corroborated by both sources                                 |
+
+STEP 6 - Compare against Clause 3.1 threshold and make decision
+| Item                               | Figure                                       | Source                            |
+| ---------------------------------- | -------------------------------------------- | --------------------------------- |
+| Certified Retail SAM (computed)    | ₹39,360 Cr                                   | Steps 2–5 above                   |
+| Minimum SAM Threshold (Clause 3.1) | ₹40,000 Cr                                   | File 3, JV Term Sheet, Clause 3.1 |
+| Gap                                | ₹39,360 Cr − ₹40,000 Cr = −₹640 Cr (−1.6%)   | Calculation                       |
+| Threshold satisfied?    | NO — SAM falls short by ₹640 Cr (1.6%)       | Clause 3.1 comparison             |
+| DECISION | NO-GO — JV cannot proceed to Financial Close | Clause 3.1 — non-waivable         |",https://drive.google.com/drive/folders/143CBytbf3byYDvDmQJqgEUO4G3vQtxv3?usp=drive_link,"V1- ₹48,000 Cr is noted as the pre-adjustment total market figure. It is explicitly not the Certified Retail SAM,
+V2- Clause 4.2 of the JV Term Sheet explicitly cited as the basis for excluding fleet/commercial volumes,
+V3- Fleet % = 18%,
+V4- Fleet value deducted = 18% × ₹48,000 Cr = ₹8,640 Cr. Acceptable range: ₹8,400–₹8,880 Cr,
+V5- Certified Retail SAM= ₹39,360 Cr or in the range ₹38,800 Cr – ₹40,000 Cr,
+V6- Minimum SAM threshold of ₹40,000 Cr,
+V7- DECISION = NO-GO concluded,
+V8- 2-wheeler, 3-wheeler, and bus/CV market data are explicitly excluded from the SAM calculation with rationale,
+V9- Vietnam, Thailand, Indonesia figures from File-Asia_Pacific_EV_Intelligence_Report.docx Sections 1–3 are not cited as evidence for India's SAM,
+V10- China / ChengAuto domestic data not used for India SAM,
+V11- ₹15L–₹40L segment boundary maintained and not included in SAM,
+V12- Response names at minimum: (1) File JV_TermSheet_EnerDrive_IndraMotors_Draft.docx, Clause 4.2 for fleet exclusion mandate; AND (2) File-Asia_Pacific_EV_Intelligence_Report.docx, Appendix B, Footnote 3 OR File-India_EV_Passenger_Market_FY27.xlsx, Vehicle_Category_Mix, Section I for the 18% fleet figure,
+",
+tsk_1874355798,IGZBYY,Operations Optimization,RCP,LDP,"A 350-bed multispecialty hospital in North India has seen a sharp rise in patient complaints related to long morning outpatient department (OPD) waits in General Medicine. The COO needs a recommendation within one week on whether the hospital can fix the issue through process redesign alone or whether it must add permanent front-end staffing before the next quarter. A wrong recommendation could either lock in avoidable recurring manpower cost or worsen patient walkouts consultation loss and satisfaction scores during peak season.
+
+Using only the provided internal files determine the true bottleneck in the weekday morning General Medicine OPD flow and assess whether the hospital should:
+Option A: continue with the current doctor-specific registration / consultation queue structure and add limited staffing or
+Option B: move to a pooled front-end queue with common registration-triage and dynamic routing to available doctors without adding permanent staff.
+
+Your analysis must determine the hospital’s current effective capacity utilization and patient waiting burden during the stable weekday peak window and must exclude any one-off or non-repeatable support arrangements disclosed in the files. The recommendation must be based on process flow waiting time and operational feasibility not on patient anecdotes alone.
+
+Prepare a one-page decision memo with exactly these 5 sections:
+Executive Summary: one paragraph with final recommendation: Retain Dedicated Queues or Adopt Pooled Queue Model.
+Current-State Flow Diagnosis: registration triage doctor consultation flow with bottleneck identified.
+Capacity and Waiting Analysis: capacity utilization and waiting-time implications by major step.
+Decision Rationale: why the selected queue design is superior for the next 90 days.
+Implementation Actions: 3 practical actions for execution within 6 weeks.
+
+Use only the provided files; no external search is allowed.
+Use the stable weekday morning peak window stated in the files.
+Round patient volumes to whole numbers waiting times to nearest whole minute and utilization to one decimal place.
+Exclude any pilot desks temporary volunteers one-time overflow counters health-camp days or exceptional staffing support if such support is disclosed outside the main summary pages.","Lazy AI Test:
+A standard frontier model will likely use the full 8:00 to 12:00 average arrival rate of 67.5 patients per hour instead of the required 9:00 to 11:00 peak rate of 85 patients per hour, and may also count temporary pilot registration support as baseline capacity, understating peak demand by 17.5 patients per hour or 20.6 percent and overstating front end capacity, which can lead it to misdiagnose the bottleneck and recommend the wrong queue design.
+
+Expert Test:
+An operations consultant using only the provided files, isolating the stable 9:00 to 11:00 weekday peak window, excluding temporary pilot or one off support from baseline staffing, and comparing effective capacities across registration, triage, and consultation would identify the true bottleneck, calculate peak utilization and waiting burden correctly, and reach the same single correct recommendation on whether to retain dedicated queues or adopt the pooled queue model.","1. Use the stable weekday morning peak window stated in the flow file: 9:00 AM to 11:00 AM. Arrivals in that window are 170 patients in 2 hours, so peak demand is 85 patients/hour. Do not use the full 8:00 AM to 12:00 PM average of 270/4 = 67.5 patients/hour for the diagnosis.
+
+2. The pilot note says Registration Executive 4 was pilot only, served as quick-token/document pre-check rather than full registration, and was not approved for BAU continuation; the two central-admin trainees were also temporary and only present on Mondays and Thursdays. Therefore the “4 registration servers” shown in the summary cannot be treated as baseline full-registration capacity. Baseline full-registration staffing is 3 registration executives, with Executive 3 redeployed to billing support at 10:30 on 3 weekdays.
+
+3. The baseline service time for registration is 3 minutes per patient, so one full-registration server has capacity of 60/3 = 20 patients/hour. Excluding the pilot-only Executive 4 leaves 3 routine registration executives, giving baseline registration capacity of 3 × 20 = 60 patients/hour from 9:00 to 10:30. Because Executive 3 leaves at 10:30 on 3 weekdays, capacity drops to 2 x 20 = 40 patients/hour for the last 30 minutes on those days. For the stable 2-hour peak window, effective routine weekday registration capacity is therefore 55 (1.5 hours x 60 + 0.5 hours x 40)/2 = 55 patients/hour on those weekdays, and at best 60 patients/hour if the redeployment does not occur.
+
+4. Triage has 2 nurses with average service time of 2 minutes per patient, so each nurse can process 60/2 = 30 patients/hour. Total triage capacity is 2 x 30 = 60 patients/hour.
+
+5. Doctor capacities in the baseline file are  A 7.5, B 8, C 7.1, and D 8.6 patients/hour, for combined doctor consultation capacity of 31.2 patients/hour.
+
+6. Process capacity is governed by the bottleneck (the step with the lowest capacity). Comparing major steps during the stable peak window: registration is 55-60 patients/hour depending on routine redeployment, triage is 60 patients/hour, and consultation is 31.2 patients/hour. Therefore consultation is the bottleneck and current effective process capacity is 31.2 patients/hour. 
+Using the peak arrival rate of 85 patients/hour, implied utilization is registration 141.7% to 154.5%, triage 141.7%, and consultation 272.4%; even if we use the observed doctor throughput of 57 patients seen from 9 to 11, that is 28.5 patients/hour and implies consultation utilization of 298.2%. This shows the system is structurally overloaded in the peak window, with consultation the tightest constraint.
+
+7. Observed queue snapshots show consultation queues rising from 11 at 9:00 to 18 at 10:30, while triage queues remain much smaller at 3 to 6. Registration queues are also large, but the pilot note states dashboard registration wait excludes time spent in the pre-check/quick-token line during the pilot, so reported registration waiting understates the true front-end burden in the pilot period. Patient-path samples show doctor-queue waits commonly in the mid-to-high teens and often above 20 minutes, while triage waits remain small. The conclusion is that the stable waiting burden is concentrated before consultation, with frontend congestion worsened by the current dedicated doctor-linked token structure and pilot masking effects.
+
+8. Patients are assigned to doctor linked queues after registration and rebalancing across doctor queues is limited once a token is issued. The doctor loads are uneven in the 9:00 to 11:00 window, with actual patients seen of 16, 14, 12, and 15 despite different doctor speeds, which indicates fragmentation across doctor-specific queues. Since pooling reduces waiting relative to separate queues at the same overall utilization by reducing mismatch and variability across servers, the current dedicated queue structure adds avoidable delay on top of an already capacity-tight consultation stage.
+
+9. Option A keeps doctor-specific registration/consultation queues and adds limited staffing. But the data show the front-end headline staffing was already flattered by temporary pilot support, and even corrected front-end capacity remains well above doctor consultation capacity in the no-pilot baseline; adding permanent front-end staff without changing queue design does not fix the consultation constraint or the queue fragmentation caused by doctor-linked tokens. 
+
+Option B shifts to pooled front-end registration-triage flow with dynamic routing to the next available doctor without adding permanent staff; this directly addresses the queue-fragmentation problem and is the only option that can reduce waiting materially without locking in avoidable recurring manpower cost.
+
+10. The correct recommendation is Adopt Pooled Queue Model. The hospital’s true stable weekday morning bottleneck is doctor consultation, not triage, and not a front-desk staffing shortage alone; however, because the current doctor-specific queue design amplifies waiting through fragmented doctor queues, the best next-90-day move is to switch to pooled front-end registration-triage with dynamic routing to available doctors, while excluding pilot staffing from the baseline and avoiding permanent front-end hiring at this stage.",https://drive.google.com/drive/folders/13n8qgZjkiljSZuKfEX8056WnKgLn48WL,"v1: Use the stable peak window of 9:00 to 11:00 as the main analysis window
+v2: Calculates peak demand as 170 patients in 2 hours
+v3: Convert peak demand to 85 patients per hour
+v4: Do not use 67.5 patients per hour as the primary demand rate for diagnosis
+v5: Exclude Registration Executive 4 from baseline registration capacity because that role was pilot only
+v6: Exclude the 2 central admin trainees from baseline capacity because they were temporary and not BAU staffing
+v7: Calculate baseline registration capacity using 3 routine registration executives, not 4
+v8: Identify that registration capacity drops after 10:30 on weekdays when Registration Executive 3 is redeployed
+v9: Calculate triage capacity as 60 patients per hour
+v10: Calculate combined doctor consultation capacity as 31.2 patients per hour
+v11: Identify doctor consultation as the lowest capacity stage
+v12: State that effective process capacity is determined by the bottleneck
+v13: Calculate current effective process capacity as 31.2 patients per hour
+v14: Calculate consultation utilization against peak demand and shows that it is above 100 percent
+v15: Explain that the main waiting burden builds before consultation
+v16: Note that reported registration wait in the pilot period is understated because pre check and quick token time was excluded
+v17: Identify the current doctor linked token model as a source of queue fragmentation
+v18: Explain that pooling patients across available doctors reduces waiting compared with separate doctor specific queues
+v19: Reject adding permanent front end staffing as the primary next 90 day fix
+v20: Recommend Adopt Pooled Queue Model as the final decision",
+tsk_8271853759,9LRU4E,Market Strategy,SCP,FSP,"Workflow Domain: Market Strategy, Persona: Chief Strategy Officer
+A fast-growing D2C beauty and personal care brand headquartered in Singapore is preparing to launch its offline retail presence in India for the first time. The brand has built a loyal base of 2.4 million online customers across India but has no physical retail footprint. The Chief Strategy Officer needs a channel strategy recommendation before committing ₹420 Cr of capital across FY2026–FY2028. A wrong channel decision at this stage risks stranding capital in a high-fixed-cost store network with no viable exit, or alternatively, leaving the premium offline segment — the fastest-growing BPC channel in India — to domestic incumbents. Evaluate three go-to-market options for India offline expansion and produce a Strategy Memo recommending exactly one:
+Option A — EBO Only: Deploy Exclusive Brand Outlets (EBOs) in 18 Tier-1 and Tier-2 cities
+Option B — Hybrid (EBO + MBO): Combine EBOs with Multi-Brand Outlet partnerships in the same 18 cities
+Option C — Defer: Remain digital-only for 24 months and reassess
+Your recommendation must be grounded in a rigorous market sizing and financial analysis using the provided data files and the current Euromonitor International growth rate for India BPC offline retail. Evaluate all three options on financial merit. Do not use any growth rate from internal documents for market projection — the internal figure is explicitly flagged as outdated and must be overridden. All financial figures must be in INR (₹ Cr). Do not convert to USD. Do not use any live data other than the Euromonitor growth rate.
+Deliver a Strategy Memo containing exactly the following five sections in this order:
+Executive Summary (~120 words): Final channel recommendation and expected IRR of the recommended model.
+Market Sizing Table: TAM (FY2027), SAM, SOM by model. State the Euromonitor growth rate used and explicitly confirm it differs from the internal placeholder in BPC Channel Model.xlsx (Market Sizing Assumptions sheet).
+Channel Economics Table: Wallet capture rate, net contribution margin, and net annual revenue (₹ Cr) for each of the three options. Source all three wallet capture rates and net contribution margins from BPC Channel Model.xlsx (Channel Margin Model sheet).
+IRR Comparison Table: IRR per model, hurdle rate, and pass/fail status. Source projected IRRs and the hurdle rate from BPC Channel Model.xlsx (Channel Margin Model sheet) and confirm the hurdle rate against Brand Assumptions.docx.
+Final Recommendation: Choose exactly one option. Justify using the IRR hurdle, the SOM capture viability band (4.0%–8.5%) from Brand Assumptions.docx, and the capital constraint logic.","Lazy AI Test: A standard model will use the internal 4.8% BPC growth rate from Brand Assumptions.docx instead of the Euromonitor 7.2% figure, producing a TAM of ₹2,03,186 Cr (understated by ₹9,413 Cr), a SAM of ₹46,977 Cr (understated by ₹2,176 Cr), a suppressed Hybrid net revenue of approximately ₹97 Cr, and an IRR of 14.1% — which falls below the 16% hurdle and incorrectly recommends Defer, the opposite of the correct answer. Expert Test: An MC analyst sourcing the Euromonitor 2025 growth rate (7.2%), applying the offline channel share and premium segment share from the internal files, summing city-level households from the CSV, and comparing all three IRRs against the 16% hurdle from the assumptions document will arrive at Hybrid as the only viable option. The logic path is fully deterministic and produces one correct answer.","Decision Archetype: Market Sizing
+Step 1 — External Growth Rate Source: Euromonitor International — Beauty & Personal Care in India, 2025 edition URL: https://www.euromonitor.com/beauty-and-personal-care-in-india/report Value used: 7.2% per annum Note: Brand Assumptions.docx contains an internal BPC offline retail growth rate of 4.8% labelled OUTDATED (Nielsen India Retail Report, 2023). This must be overridden by the Euromonitor figure per prompt instruction.
+Step 2 — Project TAM to FY2027 Source: TAM base from BPC Channel Model.xlsx (Market Sizing Assumptions sheet) TAM base FY2025: ₹1,85,000 Cr Projection horizon: 2 years (FY2025 → FY2027) TAM FY2027 = 1,85,000 × (1 + 0.072)² = ₹2,12,599 Cr
+Step 3 — Compute SAM Source: Offline channel share and premium segment share from BPC Channel Model.xlsx (Market Sizing Assumptions sheet) Offline channel share: 68% Premium + mass-premium segment share: 34% SAM = 2,12,599 × 0.68 × 0.34 = ₹49,153 Cr
+Step 4 — Compute SOM per Model Source: Urban_Households column (sum), Avg_Annual_BPC_Spend_Per_HH_INR — City Expansion Plan.csv Source: Wallet capture rates — BPC Channel Model.xlsx (Channel Margin Model sheet) Total target urban households (18 cities): 52,40,000 Avg annual BPC spend per household: ₹8,400
+SOM (EBO Only) = 52,40,000 × 8,400 × 4.2% = ₹184.9 Cr SOM (Hybrid) = 52,40,000 × 8,400 × 6.8% = ₹299.3 Cr SOM (Digital Only) = 52,40,000 × 8,400 × 3.1% = ₹136.3 Cr
+Step 5 — Net Revenue After Channel Costs Source: Net contribution margin per model — BPC Channel Model.xlsx (Channel Margin Model sheet) Net margin EBO: 28% | Net margin Hybrid: 34% | Net margin Digital: 28%
+Net Revenue EBO = 184.9 × 0.28 = ₹51.8 Cr Net Revenue Hybrid = 299.3 × 0.34 = ₹101.8 Cr Net Revenue Digital = 136.3 × 0.28 = ₹38.2 Cr
+Step 6 — IRR Comparison Source: Projected IRR per model — BPC Channel Model.xlsx (Channel Margin Model sheet) Source: IRR hurdle rate — Brand Assumptions.docx
+IRR hurdle rate: 16% IRR EBO Only: 11.4% → FAIL IRR Hybrid: 17.3% → PASS IRR Digital Only: 9.8% → FAIL
+Final Decision: Hybrid (EBO + MBO) = GO
+Golden Answer Range: TAM FY2027: ₹2,06,000 Cr – ₹2,19,000 Cr SAM FY2027: ₹47,600 Cr – ₹50,700 Cr SOM Hybrid: ₹290 Cr – ₹308 Cr Net Revenue Hybrid: ₹98 Cr – ₹106 Cr IRR Hybrid: 16.5% – 18.5% Decision: Hybrid (EBO + MBO)",https://drive.google.com/drive/u/0/folders/1JIs4sVC-UG_ZyDwkekQ8eSVJMjAeyVS3,"V1: Euromonitor growth rate used = 7.2%, not the internal 4.8% placeholder 
+V2: TAM FY2027 = ₹2,06,000 Cr – ₹2,19,000 Cr 
+V3: SAM computed as TAM × 68% × 34% = ₹47,600 Cr – ₹50,700 Cr 
+V4: Total target households = 52,40,000 (summed from City Expansion Plan.csv, 18 cities) 
+V5: SOM Hybrid = ₹290 Cr – ₹308 Cr (using 6.8% wallet capture rate) 
+V6: Net contribution margin Hybrid = 34% (from BPC Channel Model.xlsx) 
+V7: Net Revenue Hybrid = ₹98 Cr – ₹106 Cr 
+V8: IRR Hybrid ≥ 16% hurdle = PASS 
+V9: IRR EBO Only < 16% hurdle = FAIL 
+V10: IRR Digital Only < 16% hurdle = FAIL 
+V11: Final recommendation = Hybrid (EBO + MBO)",
+tsk_6176153875,379MO5,Market Strategy,SCP,FSP,"A homegrown Indian QSR brand known for its clean-label, high-protein menu, has spent five years building a loyal customer base through delivery-first operations across six metro cities. The board has cleared Rs 185 Cr in capital for FY2026–FY2028 to launch a physical retail presence under a premium sub-brand, ""Nourish Select,"" targeting health-conscious urban professionals in 12 Tier-1 cities. This is the brand's first step into owned physical formats, and the CMO must bring a format recommendation to the investment committee in three weeks. A wrong format decision locks the company into a high-fixed-cost physical footprint with no viable exit for at least 36 months — or worse, leaves the fast-growing premium health QSR segment open to well-funded domestic and international competitors who are already scouting the same trade zones. Evaluate three physical format options for the Nourish Select launch across 12 Tier-1 cities and produce an Investment Memo recommending exactly one:
+Format A — Standalone Cloud Kitchen + Delivery Hub
+Format B — Dine-In + Delivery Hybrid
+Format C — Premium Mall Kiosk
+Your recommendation must be derived from a market sizing and financial analysis using the provided data files and the current Technopak Foodservice India growth rate sourced externally. Do not use any growth rate from internal documents — the figure in internal files is explicitly flagged as outdated. All financial figures in INR (Rs Cr). No USD. No other live data beyond the Technopak growth rate. Produce an Investment Memo with exactly these five sections in this order, with these exact names:
+Investment Thesis (~100 words): State the recommended format and the single most important financial reason.
+Market Sizing Table: Three-row table — Metric / Value (Rs Cr) / Source. Rows: TAM FY2026, SAM FY2026, SOM (recommended format). State the Technopak growth rate used and explicitly confirm it differs from the placeholder in Brand Parameters.docx.
+Format Economics Table: Four-column table — Format / Wallet Capture Rate (%) / Net Contribution Margin (%) / Net Annual Revenue (Rs Cr). All three formats. Source wallet capture rates and margins from QSR Format Model.xlsx (Format Economics sheet).
+IRR & Hurdle Assessment: Table — Format / Projected IRR (%) / Hurdle Rate (%) / Decision. Source projected IRRs from QSR Format Model.xlsx (Format Economics sheet); confirm hurdle rate against Brand Parameters.docx. Decision column: PASS or FAIL.
+Format Recommendation: Name exactly one format. Justify using: (a) IRR vs hurdle rate, (b) wallet capture rate against the viability band from Brand Parameters.docx, (c) capital constraint logic.","Lazy AI Test: A standard frontier model will use the internal growth rate of 8.8% from Brand Parameters.docx instead of the Technopak figure of 11.2%, producing a TAM of Rs 9,23,320 Cr (understated by Rs 41,184 Cr), a SAM of Rs 50,690 Cr (understated by Rs 2,261 Cr), and — critically — an IRR for Format A of 15.8% instead of 18.3%, which falls below the 18% board hurdle and incorrectly produces a NO GO recommendation, the opposite of the correct answer. Expert Test: An MC analyst sourcing the Technopak 11.2% growth rate, applying segment and channel shares from QSR Format Model.xlsx, summing city-level premium HHs from City Trade Zone Data.csv, and comparing all three format IRRs against the 18% hurdle from Brand Parameters.docx will arrive at Format A as the only format clearing the hurdle. One correct answer exists.","Decision Archetype: Market Sizing
+
+Step 1 — External Growth Rate Source: Source: Technopak Foodservice India Report, 2025 edition | Value used: 11.2% per annum Note: Brand Parameters.docx contains an internal growth rate of 8.8% labelled OUTDATED (NRAI 2022). QSR Format Model.xlsx (Market Sizing Inputs sheet, row ""India Foodservice Market Growth Rate — INTERNAL PLACEHOLDER"") carries the same stale value. Both must be overridden.
+Step 2 — Project TAM to FY2026: TAM base FY2024: Rs 7,80,000 Cr — from QSR Format Model.xlsx (Market Sizing Inputs sheet, ""TAM Base — India Foodservice Market FY2024""), confirmed against Brand Parameters.docx Projection horizon: 2 years — from QSR Format Model.xlsx (Market Sizing Inputs sheet, ""Projection Horizon"") TAM FY2026 = 7,80,000 × (1.112)² = Rs 9,64,504 Cr
+Step 3 — Compute SAM: Premium health segment share: 9% — from QSR Format Model.xlsx (Market Sizing Inputs, ""Premium Health Segment Share of Foodservice"") Urban organised channel share: 61% — from QSR Format Model.xlsx (Market Sizing Inputs, ""Urban Organised QSR Channel Share"") SAM = 9,64,504 × 0.09 × 0.61 = Rs 52,951 Cr
+Step 4 — Compute SOM per Format: Total premium HHs: 28,40,000 — summed from ""Premium HH"" column across all 12 rows in City Trade Zone Data.csv Avg annual spend: Rs 4,200 — from City Trade Zone Data.csv (""Avg Annual Premium QSR Spend INR"", uniform across all 12 cities), confirmed against QSR Format Model.xlsx (Market Sizing Inputs, ""Avg Annual Premium QSR Spend per HH (Rs)"") Wallet capture rates — from QSR Format Model.xlsx (Format Economics sheet):
+SOM Format A = 28,40,000 × 4,200 × 3.1% = Rs 37.0 Cr
+SOM Format B = 28,40,000 × 4,200 × 5.8% = Rs 69.2 Cr
+SOM Format C = 28,40,000 × 4,200 × 1.9% = Rs 22.7 Cr
+Step 5 — Net Revenue After Format Costs: Net contribution margins — from QSR Format Model.xlsx (Format Economics sheet, ""Net Contribution Margin""):
+Net Revenue Format A = 37.0 × 0.31 = Rs 11.5 Cr
+Net Revenue Format B = 69.2 × 0.22 = Rs 15.2 Cr
+Net Revenue Format C = 22.7 × 0.27 = Rs 6.1 Cr
+Step 6 — IRR Comparison: Projected IRRs — from QSR Format Model.xlsx (Format Economics sheet, ""Projected IRR — This Format"") IRR hurdle: 18% — from QSR Format Model.xlsx (Format Economics sheet, ""IRR Threshold (Hurdle Rate)""), confirmed against Brand Parameters.docx (""IRR Hurdle Rate (Board-Mandated)"")
+IRR Format A: 18.3% → PASS
+IRR Format B: 14.1% → FAIL
+IRR Format C: 9.2% → FAIL
+Final Decision: Format A — Standalone Cloud Kitchen + Delivery Hub = GO
+Golden Answer Range: TAM FY2026: Rs 9,35,000 Cr – Rs 9,93,000 Cr | SAM FY2026: Rs 51,400 Cr – Rs 54,500 Cr | SOM Format A: Rs 35.5 Cr – Rs 38.5 Cr | Net Revenue Format A: Rs 11.0 Cr – Rs 12.0 Cr | IRR Format A: 17.5% – 19.0% | Decision: Format A",https://drive.google.com/drive/u/0/folders/104U4cGEIMYwiWPiIjVI92NKmpzFPJDkG,"V1: Technopak growth rate used = 11.2%, not the internal 8.8% NRAI placeholder 
+V2: TAM FY2026 = Rs 9,35,000 Cr – Rs 9,93,000 Cr 
+V3: SAM computed as TAM × 9% × 61% = Rs 51,400 Cr – Rs 54,500 Cr 
+V4: Total target premium HHs = 28,40,000 (summed from Premium HH column in City Trade Zone Data.csv, 12 cities) 
+V5: SOM Format A = Rs 35.5 Cr – Rs 38.5 Cr (3.1% wallet capture rate) 
+V6: SOM Format B = Rs 67.0 Cr – Rs 71.5 Cr (5.8% wallet capture rate) 
+V7: Net contribution margin Format A = 31% (QSR Format Model.xlsx, Format Economics sheet) 
+V8: Net Revenue Format A = Rs 11.0 Cr – Rs 12.0 Cr 
+V9: IRR Format A ≥ 18% hurdle = PASS 
+V10: IRR Format B < 18% hurdle = FAIL 
+V11: IRR Format C < 18% hurdle = FAIL",

@@ -30,6 +30,11 @@ callable, so the module is fully testable without a live model.
 """
 from __future__ import annotations
 
+#: Verifier-id pattern — classic (V1, V5a) and semantic (V_P1_pat_2004) ids.
+_VID = r"V(?:\d+[a-z]?|_[A-Za-z0-9][A-Za-z0-9_.]*)"
+_VID_LINE = (r"\s*(?P<vid>" + _VID + r")\s*(?:\[[^\]]*\])?"
+             r"\s*(?::\s*|\s+-\s+)(?P<text>.*)")
+
 import html as _html
 import json
 import re
@@ -106,9 +111,10 @@ class Run:
     def verifiers(self) -> List[dict]:
         out = []
         for line in (self.data.get("augmented_verifiers_text") or "").splitlines():
-            m = re.match(r"\s*(V\d+[a-z]?)\s*:\s*(.*)", line)
+            m = re.match(_VID_LINE, line)
             if m:
-                out.append({"id": m.group(1), "text": m.group(2).strip()})
+                out.append({"id": m.group("vid"),
+                            "text": m.group("text").strip()})
         return out
 
 
@@ -184,10 +190,12 @@ def _group(items, kind, llm_cluster, value_of=None) -> Dict[str, List[int]]:
             for i, role in mapping.items():
                 groups[role].append(i)
             groups = _value_postmerge(dict(groups), items, value_of)
+            groups = _conflation_split(groups, items, value_of)
             return groups
     for i, it in enumerate(items):
         groups[_keyword_role(it["label"])].append(i)
-    return _value_postmerge(dict(groups), items, value_of)
+    return _conflation_split(
+        _value_postmerge(dict(groups), items, value_of), items, value_of)
 
 
 def _value_postmerge(groups: Dict[str, List[int]], items,
@@ -247,6 +255,92 @@ def _value_postmerge(groups: Dict[str, List[int]], items,
     return dict(merged)
 
 
+def _conflation_split(groups: Dict[str, List[int]], items,
+                      value_of) -> Dict[str, List[int]]:
+    """Deterministic safety net for OVER-merged clustering — the complement of
+    _value_postmerge. The LLM clusterer sometimes sweeps two genuinely different
+    quantities into one role because their labels look alike (observed: "PPI Dec
+    2025" = 157.039 and "Inflation factor" = 1.0272 merged into one role, so the
+    value vote ran across both and the wrong value could seal onto the claim).
+
+    A cluster is SPLIT into per-value-group roles only when the groups are
+    distinct QUANTITIES, judged by two robust signals:
+      * co-occurrence: two claims from the SAME run with different values are
+        necessarily distinct quantities (a run does not compute one quantity
+        twice with two values) — a decisive split signal; or
+      * operation signature: the value-groups are produced by different
+        `operation` strings (e.g. 'ppi_dec2025' vs 'ppi_dec2025/ppi_dec2024').
+
+    It deliberately does NOT split when the groups look like the same quantity
+    under a different convention — a pure SIGN FLIP (a == -b) with a matching
+    operation — because that is a reconciliation the value vote/representative
+    handles, not two quantities. Those remain one cluster (and the
+    CLUSTER_CONFLATION diagnostic still flags them for SME review).
+    """
+    if value_of is None or not groups:
+        return groups
+
+    def num(it):
+        v = value_of(it)
+        return _num_key(v)
+
+    def op_of(it):
+        return (it.get("ref", (None, {}))[1] or {}).get("operation", "")
+
+    def run_of(it):
+        return it.get("ref", (None, None))[0]
+
+    out: Dict[str, List[int]] = {}
+    for role, idxs in groups.items():
+        vals = [(i, num(items[i])) for i in idxs]
+        numeric = [(i, v) for i, v in vals if v is not None]
+        if len(numeric) < 2:
+            out[role] = idxs
+            continue
+        # bucket indices into value-groups (within relative tolerance)
+        vgroups: List[dict] = []
+        for i, v in numeric:
+            hit = None
+            for g in vgroups:
+                if abs(v - g["v"]) <= (abs(g["v"]) * 1e-3 + 1e-9):
+                    hit = g
+                    break
+            if hit is None:
+                vgroups.append({"v": v, "idxs": [i]})
+            else:
+                hit["idxs"].append(i)
+        non_numeric = [i for i, v in vals if v is None]
+        if len(vgroups) < 2:
+            out[role] = idxs
+            continue
+        # decide split vs keep
+        runs_seen = [set(run_of(items[i]) for i in g["idxs"]) for g in vgroups]
+        co_occur = any(runs_seen[a] & runs_seen[b]
+                       for a in range(len(vgroups))
+                       for b in range(a + 1, len(vgroups)))
+        ops = [set(op_of(items[i]) for i in g["idxs"]) for g in vgroups]
+        ops_differ = any(not (ops[a] & ops[b])
+                         for a in range(len(vgroups))
+                         for b in range(a + 1, len(vgroups)))
+        # pure sign-flip of one quantity (same |value|, one op) -> do NOT split
+        all_ops = set().union(*ops) if ops else set()
+        vs = [g["v"] for g in vgroups]
+        sign_flip = (len(vgroups) == 2 and len(all_ops) <= 1
+                     and abs(abs(vs[0]) - abs(vs[1])) <= (abs(vs[0]) * 1e-3 + 1e-9)
+                     and (vs[0] * vs[1]) < 0)
+        if sign_flip or not (co_occur or ops_differ):
+            out[role] = idxs          # keep as one cluster (reconcile / SME-flag)
+            continue
+        # SPLIT: one role per value-group; attach non-numeric items to the first
+        for k, g in enumerate(sorted(vgroups, key=lambda x: -len(x["idxs"]))):
+            name = role if k == 0 else f"{role} ⟨{g['v']:g}⟩"
+            members = list(g["idxs"])
+            if k == 0:
+                members += non_numeric
+            out[name] = members
+    return out
+
+
 def adjudicate(
     run_jsons: List[dict],
     llm_cluster: Optional[Callable[[str], str]] = None,
@@ -284,13 +378,33 @@ def adjudicate(
             continue
         vals = [c.get("recomputed") for ri, c in occ
                 if ri in vr_idx and c.get("recomputed") is not None]
+        # DIAGNOSTIC (TODO-3): detect a CONFLATED cluster — one role that has
+        # swept together claims of two genuinely different quantities (observed:
+        # "PPI Dec 2025" = 157.039 and "Inflation factor" = 1.0272 clustered into
+        # one role, so the value vote runs across both and the wrong value wins,
+        # corrupting the sealed claim). Signature: the cluster's numeric values
+        # fall into 2+ groups that differ by more than a rounding tolerance.
+        _num = [_num_key(v) for v in vals if _num_key(v) is not None]
+        if len(_num) >= 2:
+            _groups = []
+            for v in _num:
+                if not any(abs(v - g) <= (abs(g) * 1e-3 + 1e-9) for g in _groups):
+                    _groups.append(v)
+            if len(_groups) >= 2:
+                _labels = sorted({c.get("label", "") for ri, c in occ
+                                  if ri in vr_idx})
+                adj.notes.append(
+                    "CLUSTER_CONFLATION role=%r holds %d distinct value-groups "
+                    "%r across labels %r — a value vote here mixes different "
+                    "quantities; the sealed claim may take the wrong value" % (
+                        role, len(_groups), _groups, _labels))
         winner, has_maj, tally = _vote(vals, len(value_runs)) if vals else (None, False, {})
         chosen = winner
         if vals:
             chosen = _judge_value(adj, llm_judge, role=role, tally=tally,
                                   majority=winner, has_majority=has_maj,
                                   occ=occ, kind="claim_value")
-        final_claims.append(_rep(occ, vr_idx, chosen))
+        final_claims.append(_rep(occ, vr_idx, chosen, adj=adj, role=role))
     final["corrected_claim_verdicts"] = final_claims
 
     # VERIFIERS
@@ -392,7 +506,20 @@ def adjudicate(
     # canonical text and produces fresh V1..Vn targets that match the merged set.
     try:
         from src.verifier_grammar import derive_expected_values
-        ev, _ = derive_expected_values(final["augmented_verifiers_text"])
+        # Collect the task's known trap values from the runs' claims so the
+        # widened compute-result target reader is enabled here too (guarded — it
+        # never freezes a trap value). Without this the merge freezes only the
+        # strict "= N" / "must be N" targets and the compute-phrased interior
+        # verifiers ("Calculate X as N") get no target, so they cannot map to a
+        # step and the overlaid crux/coverage collapses downstream.
+        _trap_values = sorted({
+            c.get("trap_value")
+            for r in runs
+            for c in (r.data.get("corrected_claim_verdicts") or [])
+            if c.get("trap_value") is not None
+        })
+        ev, _ = derive_expected_values(final["augmented_verifiers_text"],
+                                       trap_values=_trap_values)
         final["expected_values"] = ev
     except Exception:                                           # noqa: BLE001
         final["expected_values"] = {}
@@ -408,12 +535,31 @@ def adjudicate(
     return final, adj
 
 
-def _rep(occ, vr_idx, chosen):
+def _rep(occ, vr_idx, chosen, adj=None, role=None):
+    """Return the representative claim whose recomputed value matches the
+    adjudicated `chosen`. DIAGNOSTIC: if no gate-ok claim in this cluster carries
+    the chosen value, we fall through to the first claim in the cluster — which
+    silently stamps the WRONG value onto the claim (observed: a "PPI Dec 2025"
+    cluster adjudicated to 157.039 fell through and returned the inflation-factor
+    claim, so the sealed PPI claim read 1.0272). Record every such fall-through so
+    a re-run reveals exactly which role/value crossed."""
     key = _num_key(chosen)
     if key is not None:
         for ri, c in occ:
             if ri in vr_idx and _num_key(c.get("recomputed")) == key:
                 return dict(c)
+    # no value match — this is the bug path. Log what we're about to mis-assign.
+    if adj is not None:
+        picked = next((c for ri, c in occ if ri in vr_idx), None)
+        if picked is None:
+            picked = occ[0][1]
+        adj.notes.append(
+            "REP_MISMATCH role=%r chosen=%r no gate-ok claim in cluster carries "
+            "that value; falling back to claim id=%r label=%r recomputed=%r "
+            "(cluster values=%r)" % (
+                role, chosen, picked.get("id"), picked.get("label"),
+                picked.get("recomputed"),
+                [c.get("recomputed") for ri, c in occ if ri in vr_idx]))
     for ri, c in occ:
         if ri in vr_idx:
             return dict(c)
@@ -508,49 +654,115 @@ def _pick_representative(run_jsons: List[dict]) -> Tuple[int, dict]:
 
 def build_sme_package(final: dict, adj: Adjudication,
                       run_jsons: Optional[List[dict]] = None) -> dict:
-    """Option A1: use a representative run as a COHERENT WHOLE — its trajectory,
-    claims, judgment steps, verifiers, and DAG — and apply only the adjudicated
-    VALUE OVERRIDES (e.g. a claim that read 38 becomes 42) and the majority
-    VERDICT on top.
+    """Option A: use a representative run's TRAJECTORY (claims, judgment steps,
+    DAG skeleton) as a coherent whole, overlay the ADJUDICATED (merged) verifier
+    set onto it, and apply the value overrides and majority verdict on top.
 
-    Why the whole run, not the merged verifier set: a verifier DAG only exists
-    when the verifiers were derived against those specific claims. The merged
-    verifiers come from many runs and have no single claim graph to attach to, so
-    overlaying them flattens the DAG. Using one run's verifiers keeps the
-    dependency graph intact and the document coherent for the SME. The
-    reconciliation that most affects correctness — the value overrides — is still
-    applied, and the banner records the full adjudication (including the merged
-    verifier set and every override) so nothing is hidden.
+    Why overlay the merged set rather than keep the representative's own
+    verifiers: a single run often authors only a few verifiers, so using its set
+    alone yields a crux of 1-2 even when the trajectory is rich. The merged set is
+    the reconciled union across runs. Overlaying it used to flatten the DAG —
+    the merged verifiers had no single claim graph to attach to — but the
+    containment-based verifier→step mapper now attaches them to the chosen
+    trajectory by name+value, so the dependency graph survives the overlay. The
+    representative is chosen for a rich, scoreable trajectory (see
+    _pick_representative); the merged verifiers are mapped onto it and anchors are
+    re-derived in the merged id space. The value overrides (the reconciliation
+    that most affects correctness) are still applied, and the banner records the
+    full adjudication so nothing is hidden.
     """
     if not run_jsons:
         pkg = dict(final)
     else:
         rep_i, rep = _pick_representative(run_jsons)
-        pkg = dict(rep)                        # the representative run, whole
-        adj.notes.append(f"structure + verifiers from run index {rep_i} "
-                         f"(representative); value overrides + verdict applied")
+        pkg = dict(rep)                        # the representative run's TRAJECTORY
+        adj.notes.append(f"structure from run index {rep_i} (representative); "
+                         f"merged verifier set mapped onto it; value overrides + "
+                         f"verdict applied")
         pkg["_structure_from_run"] = rep_i
-        # The persisted run stores the anchors under the OUTPUT keys
-        # (crux_anchors_trap / crux_anchors_expert) but derive_frozen_graph reads
-        # the INPUT keys (trap_anchor_ids / expert_anchor_ids). Without restoring
-        # them, the re-derivation gets no anchors and select_crux collapses the
-        # crux to just the final-answer verifier(s) — turning a 4-verifier crux
-        # into 1. Map the persisted anchors back to the input fields so the
-        # rebuild reproduces the representative run's actual crux.
-        if not pkg.get("trap_anchor_ids") and pkg.get("crux_anchors_trap"):
-            pkg["trap_anchor_ids"] = pkg["crux_anchors_trap"]
-        if not pkg.get("expert_anchor_ids") and pkg.get("crux_anchors_expert"):
-            pkg["expert_anchor_ids"] = pkg["crux_anchors_expert"]
+
+        # OPTION A: overlay the MERGED verifier set onto the representative's
+        # trajectory, instead of keeping only the representative run's own (often
+        # thin) verifiers. The merged set is the reconciled union across runs; the
+        # representative alone may carry very few verifiers, which yields a crux of
+        # 1-2 even on a rich trajectory. The containment-based verifier→step mapper
+        # (derive_dag.name_agreement) attaches the merged verifiers to this
+        # trajectory's steps by name+value, so overlaying no longer flattens the
+        # DAG the way it did under the old Jaccard mapper — measured on
+        # tsk_1104027835: 4 mapped / 2 edges / 0.33 coverage (rep-only) ->
+        # 12 mapped / 9 edges / 0.625 coverage (merged overlay). If the merge came
+        # back empty (e.g. a degenerate no-LLM run), fall back to the
+        # representative's own verifiers so we are never worse than before.
+        merged_vtext = (final.get("augmented_verifiers_text") or "").strip()
+        if merged_vtext:
+            pkg["augmented_verifiers_text"] = merged_vtext
+            # Carry the merge's frozen targets onto the overlaid package. The
+            # merge already derived expected_values from the merged text (with the
+            # task's trap values, so the compute-form targets are included);
+            # letting the re-derivation below re-freeze from scratch would drop
+            # them on a run whose own claims carry no trap_value, thinning the
+            # target set and stranding most verifiers unmapped. derive_frozen_graph
+            # keeps existing expected_values and fills only the gaps.
+            if final.get("expected_values"):
+                pkg["expected_values"] = dict(final["expected_values"])
+            # The merged set lives in the merge's re-IDed V1..Vn space, NOT the
+            # representative run's id space. The rep run's persisted anchors
+            # (crux_anchors_*) therefore do NOT resolve against the merged ids, and
+            # carrying them over would feed select_crux stale ids that filter to
+            # nothing. Drop them and let derive_frozen_graph re-derive anchors in
+            # the merged id space (expected-value + final-answer + mapped-interior),
+            # which is what produces a correct crux over the overlaid set.
+            for _k in ("trap_anchor_ids", "expert_anchor_ids",
+                       "crux_anchors_trap", "crux_anchors_expert"):
+                pkg.pop(_k, None)
+            # verifier_splits_applied is a PER-RUN artifact copied from the
+            # representative via dict(rep). Its children use that run's suffixed
+            # ids (V4a, V4b). The merge re-ids every verifier to a fresh V1..Vn
+            # space in which those suffixed ids do not exist — the split's
+            # conjuncts survive the merge as SEPARATE clustered roles (e.g. V4a's
+            # "PPI ref = 152.88" and V4b's "inflation factor = 1.027204" become two
+            # ordinary merged verifiers), so the split has already been realized in
+            # the merged set. Carrying the old log forward leaves it describing
+            # children the merged set no longer names, and the report then renders
+            # phantom "V4a split ... text not found / NO TARGET" cards for verifiers
+            # that are in fact present and targeted under new ids. Reconcile the log
+            # against the merged text: keep only entries all of whose children still
+            # appear as ids in the merged set (after re-id, none do), so the stale
+            # entries are dropped rather than shown as unscoreable orphans.
+            _merged_ids = set(re.findall(r"(?m)^\s*(" + _VID + r")\s*"
+                                         r"(?:\[[^\]]*\])?\s*:",
+                                         merged_vtext))
+            _splits = pkg.get("verifier_splits_applied") or []
+            _kept = [s for s in _splits
+                     if s.get("children")
+                     and all(c in _merged_ids for c in s["children"])]
+            if len(_kept) != len(_splits):
+                pkg["verifier_splits_applied"] = _kept
+                adj.notes.append(
+                    f"dropped {len(_splits) - len(_kept)} stale split-log "
+                    f"entry(ies) whose children were re-ided away by the merge; "
+                    f"their conjuncts remain as separate merged verifiers")
+        else:
+            # No merged set to overlay — keep the representative's own verifiers.
+            # As in the original path, the persisted run stores anchors under the
+            # OUTPUT keys (crux_anchors_*) while derive_frozen_graph reads the INPUT
+            # keys (*_anchor_ids); restore them so the rebuild reproduces the
+            # representative run's own crux instead of collapsing to the
+            # final-answer verifier(s).
+            if not pkg.get("trap_anchor_ids") and pkg.get("crux_anchors_trap"):
+                pkg["trap_anchor_ids"] = pkg["crux_anchors_trap"]
+            if not pkg.get("expert_anchor_ids") and pkg.get("crux_anchors_expert"):
+                pkg["expert_anchor_ids"] = pkg["crux_anchors_expert"]
+
         # majority verdict (structural) overlays the representative's
         pkg["audit_verdict"] = final.get("audit_verdict", pkg.get("audit_verdict"))
         pkg["task_id"] = final.get("task_id", pkg.get("task_id"))
-        # keep the merged set + overrides visible in the package for the banner /
-        # downstream, WITHOUT replacing the representative's own verifiers
+        # keep the merged set + overrides visible in the package for the banner
         pkg["adjudicated_verifier_set"] = final.get("augmented_verifiers_text", "")
         pkg["adjudicated_trap_values"] = final.get("adjudicated_trap_values", {})
-        # apply value overrides into BOTH the representative's claim values and,
-        # where the value appears in its verifier text, the verifier text — so the
-        # coherent trajectory shows the adjudicated (corrected) numbers
+        # apply value overrides into BOTH the trajectory's claim values and,
+        # where the value appears in the (now merged) verifier text, that text — so
+        # the coherent trajectory shows the adjudicated (corrected) numbers
         _apply_overrides_to_claims(pkg, adj)
         _apply_overrides_to_verifier_text(pkg, adj)
 
@@ -588,19 +800,54 @@ def _apply_overrides_to_verifier_text(pkg: dict, adj: Adjudication):
 def _apply_overrides_to_claims(pkg: dict, adj: Adjudication):
     """Write each value override into the representative run's matching claim, so
     the skeleton trajectory shows the adjudicated value (e.g. a claim that read 38
-    becomes 42). Matched by the overridden 'majority_was' value; unmatched
-    overrides are left for the banner to surface."""
+    becomes 42).
+
+    The override is matched to its claim by ROLE (label agreement), then confirmed
+    by the overridden 'majority_was' value — NOT by value alone. Matching on value
+    alone silently corrupts the trajectory whenever two distinct claims share a
+    number: an override for the 'Inflation factor' role (…-> 1.0272) would scan
+    every claim for the majority value and overwrite the 'PPI Dec 2025' claim too,
+    stamping the factor's value onto the PPI input (observed on tsk_4140790588:
+    C0a PPI 157.039 -> 1.0272, C0c rate 4.1 -> 4.3615, C8 shortfall 33688 ->
+    260000, each claim taking a DIFFERENT claim's value). Each override now edits
+    at most ONE claim — the best role match whose current value equals
+    majority_was — so a shared value can no longer cross-assign.
+    """
     claims = pkg.get("corrected_claim_verdicts") or []
+    from src.derive_dag import name_agreement, NAME_MIN
     for ov in adj.overrides:
         mv = _num_key(ov.get("majority_was"))
         cv = _num_key(ov.get("chosen"))
         if mv is None or cv is None:
             continue
-        for c in claims:
-            if _num_key(c.get("recomputed")) == mv:
-                c["recomputed"] = cv
-                c["_adjudicated_from"] = ov.get("majority_was")
-                c["_adjudicated_reason"] = ov.get("reason", "")
+        role = ov.get("role", "") or ""
+        # candidates: claims that currently hold the majority value
+        cands = [c for c in claims if _num_key(c.get("recomputed")) == mv]
+        if not cands:
+            continue                      # nothing to change; banner surfaces it
+        if len(cands) == 1 and not role:
+            target = cands[0]
+        else:
+            # pick the claim whose label best matches the override's role; require
+            # a real match so a value-only collision never wins by default.
+            scored = sorted(
+                ((name_agreement(role, c.get("label", "")), c) for c in cands),
+                key=lambda x: -x[0])
+            best_score, target = scored[0]
+            if best_score < NAME_MIN:
+                # role does not clearly identify one of the value-matches — do not
+                # guess; leave the trajectory unchanged and let the banner surface
+                # the override for SME review rather than risk a wrong write.
+                adj.notes.append(
+                    "OVERRIDE_UNAPPLIED role=%r majority_was=%r chosen=%r: "
+                    "%d claims share that value, none matches the role by name "
+                    "(best %.2f) — left unwritten to avoid cross-assignment"
+                    % (role, ov.get("majority_was"), ov.get("chosen"),
+                       len(cands), best_score))
+                continue
+        target["recomputed"] = cv
+        target["_adjudicated_from"] = ov.get("majority_was")
+        target["_adjudicated_reason"] = ov.get("reason", "")
 
 
 def _override_banner(adj: Adjudication) -> str:
@@ -615,6 +862,18 @@ def _override_banner(adj: Adjudication) -> str:
         f"Trajectory/DAG shown is from the representative run; verifiers and "
         f"values below are the reconciled (adjudicated) set.",
     ]
+    # Surface TODO-3 diagnostics (cluster conflation / rep mismatch) prominently,
+    # so a corrupted claim value is visible in the report and not buried in JSON.
+    _diag = [n for n in (adj.notes or [])
+             if n.startswith("CLUSTER_CONFLATION") or n.startswith("REP_MISMATCH")]
+    if _diag:
+        parts.append("<p style='margin:8px 0 4px'><b>⚠ Adjudication "
+                     "diagnostics (possible value corruption):</b></p>")
+        for d in _diag:
+            parts.append(
+                f"<div style='background:#fff3cd;border-left:4px solid #d39e00;"
+                f"padding:6px 10px;margin:5px 0;border-radius:6px'>"
+                f"<span class=mono>{_html.escape(d)}</span></div>")
     if adj.overrides:
         parts.append("<p style='margin:8px 0 4px'><b>Value overrides "
                      "(adjudicator judged against the majority):</b></p>")

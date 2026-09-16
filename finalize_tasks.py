@@ -68,11 +68,15 @@ def index_augments(augment_dir):
         if tid:
             out[tid] = p
     # 2) adjudicated packages — nested per-task folders, and the case where
-    #    augment_dir itself is a single task folder containing adjudicated.json
-    candidates = glob.glob(os.path.join(augment_dir, "*", "adjudicated.json"))
-    top = os.path.join(augment_dir, "adjudicated.json")
-    if os.path.isfile(top):
-        candidates.append(top)
+    #    augment_dir itself is a single task folder containing the adjudicated
+    #    package. Files are now named {task_id}_adjudicated.json; the legacy
+    #    unprefixed adjudicated.json is still matched for older output dirs.
+    candidates = (glob.glob(os.path.join(augment_dir, "*", "*_adjudicated.json"))
+                  + glob.glob(os.path.join(augment_dir, "*", "adjudicated.json")))
+    for top in (glob.glob(os.path.join(augment_dir, "*_adjudicated.json"))
+                + [os.path.join(augment_dir, "adjudicated.json")]):
+        if os.path.isfile(top):
+            candidates.append(top)
     for p in sorted(candidates):
         tid = _task_id_from_json(p)
         if not tid:
